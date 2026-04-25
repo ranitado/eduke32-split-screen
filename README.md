@@ -15,7 +15,7 @@ https://voidpoint.io/terminx/eduke32
 - Native local split-screen for 2, 3, and 4 players.
 - Gamepad-focused local multiplayer, with per-player controller and player setup.
 - Cooperative save/load support.
-- Various gameplay, UI, audio, input, and presentation adjustments to improve the split-screen experience.
+- Various general adjustments to improve the overall experience in both single-player and split-screen co-op.
 
 ## Requirements
 
