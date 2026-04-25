@@ -680,8 +680,9 @@ static FORCE_INLINE int32_t G_GetLocalPlayerAutoAimSetting(int32_t const playerN
 
 static FORCE_INLINE int32_t G_GetLocalPlayerAlwaysRunSetting(int32_t const playerNum)
 {
-    (void)playerNum;
-    return 1;
+    return G_HaveSplitScreen()
+        ? ud.config.SplitScreenPlayerAlwaysRun[G_GetSplitScreenPlayerConfigIndex(playerNum)]
+        : ud.auto_run;
 }
 
 static FORCE_INLINE int32_t G_GetLocalPlayerWeaponSwitchSetting(int32_t const playerNum)

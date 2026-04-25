@@ -28,7 +28,7 @@ This repository and its releases do **not** include `DUKE3D.GRP` or any commerci
 
 ## Installing the Windows Release
 
-1. Download `eduke32-split-screen-v0.1-windows-x64.zip` from the GitHub release.
+1. Download `eduke32-split-screen-v0.2-windows-x64.zip` from the GitHub release.
 2. Extract it to a new folder.
 3. Copy your legal `DUKE3D.GRP` into that same folder.
 4. Run `eduke32.exe`.
@@ -60,7 +60,6 @@ Controls can be changed from the in-game menus. Player 1 settings are available 
 ## Split-Screen Notes
 
 - Cooperative and DukeMatch are intended for local split-screen.
-- The `Per-player pickups` option lets each local player collect map pickups separately.
 - The `Separate KB/M pads` option makes keyboard/mouse player 1 and gamepads control the remaining players.
 - Savegames show the player count and support split-screen cooperative sessions.
 
@@ -72,7 +71,7 @@ Duke Nukem 3D is a commercial game. This project does not grant rights to the or
 
 ## Building
 
-The Windows x64 project is located under `platform/Windows`. The release builds used for v0.1 were produced with Visual Studio 2022 using the `Release|x64` configuration.
+The Windows x64 project is located under `platform/Windows`. The release builds are produced with Visual Studio 2022 using the `Release|x64` configuration.
 
 ## Upstream
 

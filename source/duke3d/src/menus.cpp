@@ -554,14 +554,8 @@ static MenuEntry_t ME_GAMESETUP_CHEATS = MAKE_MENUENTRY( "Cheats", &MF_Redfont, 
 
 static MenuEntry_t *MEL_GAMESETUP[] = {
     &ME_GAMESETUP_FRIENDLYFIRE,
-    &ME_GAMESETUP_WEAPONSHARING,
 #if defined STARTUP_SETUP_WINDOW && !defined EDUKE32_RETAIL_MENU
     &ME_GAMESETUP_STARTWIN,
-#endif
-#ifndef EDUKE32_ANDROID_MENU
-#ifdef _WIN32
-    &ME_GAMESETUP_UPDATES,
-#endif
 #endif
     &ME_GAMESETUP_CHEATS,
 };
@@ -1500,6 +1494,8 @@ static MenuEntry_t ME_PLAYER_TEAM = MAKE_MENUENTRY( "Team", &MF_Bluefont, &MEF_P
 
 static MenuOption_t MEO_PLAYER_AUTOAIM = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_GAMESETUP_AIM_AUTO, NULL );
 static MenuEntry_t ME_PLAYER_AUTOAIM = MAKE_MENUENTRY( "Auto aim", &MF_Bluefont, &MEF_PlayerNarrow, &MEO_PLAYER_AUTOAIM, Option );
+static MenuOption_t MEO_PLAYER_ALWAYS_RUN = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_NoYes, NULL );
+static MenuEntry_t ME_PLAYER_ALWAYS_RUN = MAKE_MENUENTRY( "Auto run", &MF_Bluefont, &MEF_PlayerNarrow, &MEO_PLAYER_ALWAYS_RUN, Option );
 static MenuOption_t MEO_PLAYER_EQUIP_PICKUPS = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_GAMESETUP_WEAPSWITCH_PICKUP, NULL );
 static MenuEntry_t ME_PLAYER_EQUIP_PICKUPS = MAKE_MENUENTRY( "Equip pickups", &MF_Bluefont, &MEF_PlayerNarrow, &MEO_PLAYER_EQUIP_PICKUPS, Option );
 
@@ -1513,6 +1509,8 @@ static MenuEntry_t *MEL_PLAYER[] = {
     &ME_PLAYER_TEAM,
     &ME_Space4_Bluefont,
     &ME_PLAYER_AUTOAIM,
+    &ME_Space4_Bluefont,
+    &ME_PLAYER_ALWAYS_RUN,
     &ME_Space4_Bluefont,
     &ME_PLAYER_EQUIP_PICKUPS,
 };
@@ -2161,6 +2159,12 @@ static int32_t *Menu_GetSelectedPlayerAutoAim(void)
     return playerNum == 0 ? &ud.config.AutoAim : &ud.config.SplitScreenPlayerAutoAim[G_GetSplitScreenPlayerConfigIndex(playerNum)];
 }
 
+static int32_t *Menu_GetSelectedPlayerAlwaysRun(void)
+{
+    int const playerNum = Menu_GetSelectedPlayerSetupPlayer();
+    return &ud.config.SplitScreenPlayerAlwaysRun[G_GetSplitScreenPlayerConfigIndex(playerNum)];
+}
+
 static int32_t *Menu_GetSelectedPlayerWeaponSwitch(void)
 {
     int const playerNum = Menu_GetSelectedPlayerSetupPlayer();
@@ -2194,6 +2198,7 @@ static void Menu_ApplySelectedPlayerSetup(void)
 {
     if (Menu_IsEditingPrimaryPlayerSetup())
     {
+        ud.auto_run = ud.config.SplitScreenPlayerAlwaysRun[0] != 0;
         Bstrncpyz(ud.config.SplitScreenPlayerName[0], szPlayerName, sizeof(ud.config.SplitScreenPlayerName[0]));
         if ((unsigned)myconnectindex < MAXPLAYERS)
             Bstrncpyz(g_player[myconnectindex].user_name, szPlayerName, sizeof(g_player[myconnectindex].user_name));
@@ -2234,6 +2239,7 @@ static void Menu_UpdatePlayerSetupEntries(void)
     MEO_PLAYER_COLOR.data = Menu_GetSelectedPlayerColor();
     MEO_PLAYER_TEAM.data = Menu_GetSelectedPlayerTeam();
     MEO_PLAYER_AUTOAIM.data = Menu_GetSelectedPlayerAutoAim();
+    MEO_PLAYER_ALWAYS_RUN.data = Menu_GetSelectedPlayerAlwaysRun();
     ME_PLAYER_NAME.flags &= ~MEF_Hidden;
 }
 
@@ -3338,7 +3344,8 @@ static void Menu_DrawSplitScreenHelp(const vec2_t origin)
     {
         "LS        MOVE / STRAFE",
         "RS        LOOK / AIM",
-        "RT / LT   FIRE / ALT-FIRE",
+        "LT        SLOW AIM / RUN",
+        "RT        FIRE",
         "A / B     JUMP / CROUCH",
         "X / Y     OPEN / QUICK KICK",
         "LB / RB   PREV / NEXT WEAPON",
@@ -3352,7 +3359,8 @@ static void Menu_DrawSplitScreenHelp(const vec2_t origin)
     {
         "WASD      MOVE / STRAFE",
         "MOUSE     LOOK / AIM",
-        "LMB / RMB FIRE / ALT-FIRE",
+        "SHIFT     RUN",
+        "LMB       FIRE",
         "SPACE     JUMP",
         "CTRL / C  CROUCH / TOGGLE",
         "E / Q     OPEN / QUICK KICK",
@@ -4969,6 +4977,7 @@ static void Menu_EntryOptionDidModify(MenuEntry_t *entry)
         entry == &ME_PLAYER_COLOR ||
         entry == &ME_PLAYER_TEAM ||
         entry == &ME_PLAYER_AUTOAIM ||
+        entry == &ME_PLAYER_ALWAYS_RUN ||
         entry == &ME_PLAYER_EQUIP_PICKUPS ||
         entry == &ME_CONTROLS_AIM_AUTO ||
         entry == &ME_CONTROLS_EQUIP_PICKUPS)

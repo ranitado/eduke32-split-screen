@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2
+
+- Improved gamepad controls, added LT precision aiming, auto-run disable option, default stick feel, and disabled view centering by default.
+- Improved split-screen visual effects and fixed jetpack sound, input, and menu issues.
+
 ## v0.1
 
 Initial public release.

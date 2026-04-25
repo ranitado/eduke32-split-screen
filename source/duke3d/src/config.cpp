@@ -44,8 +44,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 hashtable_t h_gamefuncs    = { NUMGAMEFUNCTIONS<<1, NULL };
 
-static float constexpr CONFIG_CONTROLLER_AIM_SENS_X = 4.2f;
-static float constexpr CONFIG_CONTROLLER_AIM_SENS_Y = 2.0f;
+static float constexpr CONFIG_CONTROLLER_AIM_SENS_X = 4.5f;
+static float constexpr CONFIG_CONTROLLER_AIM_SENS_Y = 4.5f;
+static int32_t constexpr CONFIG_CONTROLLER_VIEW_CENTERING_DEFAULT = 0;
+static int32_t constexpr CONFIG_CONTROLLER_VIEW_CENTERING_LEGACY_DEFAULT = 4;
+static int32_t g_controllerViewCenteringDefaultMigrated = 0;
 
 static void CONFIG_MigrateModernControllerDefaults(void);
 
@@ -293,7 +296,7 @@ void CONFIG_SetDefaults(void)
     ud.config.FXVolume        = 255;
     ud.config.VoiceVolume     = 255;
     ud.config.JoystickAimWeight = 4;
-    ud.config.JoystickViewCentering = 4;
+    ud.config.JoystickViewCentering = CONFIG_CONTROLLER_VIEW_CENTERING_DEFAULT;
     ud.config.JoystickAimAssist = 1;
     ud.config.SplitScreenSeparateKeyboardMouse = 0;
     for (int i = 0; i < MAXSPLITSCREENCONTROLLERPROFILES; ++i)
@@ -316,6 +319,7 @@ void CONFIG_SetDefaults(void)
     ud.config.VoiceToggle     = 5;  // bitfield, 1 = local, 2 = dummy, 4 = other players in DM
     ud.config.useprecache     = 1;
     ud.configversion          = 0;
+    g_controllerViewCenteringDefaultMigrated = 0;
     ud.crosshair              = 1;
     ud.crosshairscale         = 50;
     ud.default_skill          = 1;
@@ -589,6 +593,18 @@ void CONFIG_SetupJoystick(void)
         ud.config.JoystickAnalogueSaturate[i] = scale;
     }
 
+    SCRIPT_GetNumber(ud.config.scripthandle, "Controls", "ControllerAimWeight", &ud.config.JoystickAimWeight);
+    ud.config.JoystickAimWeight = clamp(ud.config.JoystickAimWeight, 0, 8);
+
+    SCRIPT_GetNumber(ud.config.scripthandle, "Controls", "ControllerViewCentering", &ud.config.JoystickViewCentering);
+    ud.config.JoystickViewCentering = clamp(ud.config.JoystickViewCentering, 0, 8);
+
+    SCRIPT_GetNumber(ud.config.scripthandle, "Controls", "ControllerAimAssist", &ud.config.JoystickAimAssist);
+    ud.config.JoystickAimAssist = ud.config.JoystickAimAssist != 0;
+
+    SCRIPT_GetNumber(ud.config.scripthandle, "Controls", "ViewCenteringDefaultMigrated", &g_controllerViewCenteringDefaultMigrated);
+    g_controllerViewCenteringDefaultMigrated = g_controllerViewCenteringDefaultMigrated != 0;
+
     for (int controllerIndex = 1; controllerIndex < MAXSPLITSCREENCONTROLLERS; ++controllerIndex)
     {
         int const profile = controllerIndex - 1;
@@ -738,7 +754,6 @@ void CONFIG_SetGameControllerDefaults()
         { CONTROLLER_BUTTON_B, gamefunc_Crouch },
         { CONTROLLER_BUTTON_Y, gamefunc_Quick_Kick },
         { CONTROLLER_BUTTON_BACK, gamefunc_Map },
-        { CONTROLLER_BUTTON_LEFTSTICK, gamefunc_Run },
         { CONTROLLER_BUTTON_RIGHTSTICK, gamefunc_Center_View },
         { CONTROLLER_BUTTON_DPAD_UP, gamefunc_NightVision },
         { CONTROLLER_BUTTON_DPAD_DOWN, gamefunc_Inventory },
@@ -763,7 +778,7 @@ void CONFIG_SetGameControllerDefaults()
 
     static GameControllerDigitalAxisSetting const digitalAxes[] =
     {
-        { CONTROLLER_AXIS_TRIGGERLEFT, 1, gamefunc_Alt_Fire },
+        { CONTROLLER_AXIS_TRIGGERLEFT, 1, gamefunc_Run },
         { CONTROLLER_AXIS_TRIGGERRIGHT, 1, gamefunc_Fire },
     };
 
@@ -786,7 +801,7 @@ void CONFIG_SetGameControllerDefaults()
 
     ud.config.JoystickAimAssist     = 1;
     ud.config.JoystickAimWeight     = 4;
-    ud.config.JoystickViewCentering = 4;
+    ud.config.JoystickViewCentering = CONFIG_CONTROLLER_VIEW_CENTERING_DEFAULT;
     ud.config.controllerRumble = 1;
 }
 
@@ -860,7 +875,6 @@ void CONFIG_SetSplitScreenGameControllerDefaults(int32_t const controllerIndex)
     CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_B, 0, gamefunc_Crouch);
     CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_Y, 0, gamefunc_Quick_Kick);
     CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_BACK, 0, gamefunc_Map);
-    CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_LEFTSTICK, 0, gamefunc_Run);
     CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_RIGHTSTICK, 0, gamefunc_Center_View);
     CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_DPAD_UP, 0, gamefunc_NightVision);
     CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_DPAD_DOWN, 0, gamefunc_Inventory);
@@ -881,11 +895,11 @@ void CONFIG_SetSplitScreenGameControllerDefaults(int32_t const controllerIndex)
         CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_DPAD_RIGHT, 0, gamefunc_Inventory_Right);
     }
 
-    CONFIG_SetSplitScreenJoystickDigitalAxisFunction(profile, CONTROLLER_AXIS_TRIGGERLEFT, 1, gamefunc_Alt_Fire);
+    CONFIG_SetSplitScreenJoystickDigitalAxisFunction(profile, CONTROLLER_AXIS_TRIGGERLEFT, 1, gamefunc_Run);
     CONFIG_SetSplitScreenJoystickDigitalAxisFunction(profile, CONTROLLER_AXIS_TRIGGERRIGHT, 1, gamefunc_Fire);
     ud.config.SplitScreenJoystickAimAssist[profile] = 1;
     ud.config.SplitScreenJoystickAimWeight[profile] = 4;
-    ud.config.SplitScreenJoystickViewCentering[profile] = 4;
+    ud.config.SplitScreenJoystickViewCentering[profile] = CONFIG_CONTROLLER_VIEW_CENTERING_DEFAULT;
 }
 
 static bool CONFIG_PrimaryControllerUsesOldModernDefaults(void)
@@ -913,7 +927,7 @@ static bool CONFIG_SplitControllerUsesOldModernDefaults(int const profile)
 static bool CONFIG_IsLegacyAimSensitivity(float const sens)
 {
     int const scaled = Blrintf(sens * 10.f);
-    return scaled == 14 || scaled == 20 || scaled == 25 || scaled == 30 || scaled == 35 || scaled == 40 || scaled == 50;
+    return scaled == 14 || scaled == 20 || scaled == 22 || scaled == 23 || scaled == 25 || scaled == 30 || scaled == 35 || scaled == 40 || scaled == 42 || scaled == 43 || scaled == 45 || scaled == 47 || scaled == 50;
 }
 
 static void CONFIG_MigrateAimSensitivityDefaults(int32_t const * const analogAxes, float * const sensitivity)
@@ -925,10 +939,92 @@ static void CONFIG_MigrateAimSensitivityDefaults(int32_t const * const analogAxe
         sensitivity[CONTROLLER_AXIS_RIGHTY] = CONFIG_CONTROLLER_AIM_SENS_Y;
 }
 
+static void CONFIG_MigrateViewCenteringDefault(int32_t &viewCentering)
+{
+    if (viewCentering == CONFIG_CONTROLLER_VIEW_CENTERING_LEGACY_DEFAULT)
+        viewCentering = CONFIG_CONTROLLER_VIEW_CENTERING_DEFAULT;
+}
+
+static void CONFIG_MigrateViewCenteringDefaultsOnce(void)
+{
+    if (g_controllerViewCenteringDefaultMigrated)
+        return;
+
+    CONFIG_MigrateViewCenteringDefault(ud.config.JoystickViewCentering);
+
+    for (int profile = 0; profile < MAXSPLITSCREENCONTROLLERPROFILES; ++profile)
+        CONFIG_MigrateViewCenteringDefault(ud.config.SplitScreenJoystickViewCentering[profile]);
+
+    g_controllerViewCenteringDefaultMigrated = 1;
+}
+
+static bool CONFIG_PrimaryControllerUsesPreAutoRunTriggerDefaults(void)
+{
+    return ud.config.JoystickFunctions[CONTROLLER_BUTTON_A][0] == gamefunc_Jump
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_B][0] == gamefunc_Crouch
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_Y][0] == gamefunc_Quick_Kick
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_BACK][0] == gamefunc_Map
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_LEFTSTICK][0] == gamefunc_Run
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_RIGHTSTICK][0] == gamefunc_Center_View
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_LEFTSHOULDER][0] == gamefunc_Previous_Weapon
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_RIGHTSHOULDER][0] == gamefunc_Next_Weapon
+        && ud.config.JoystickDigitalFunctions[CONTROLLER_AXIS_TRIGGERLEFT][1] == gamefunc_Alt_Fire
+        && ud.config.JoystickDigitalFunctions[CONTROLLER_AXIS_TRIGGERRIGHT][1] == gamefunc_Fire;
+}
+
+static bool CONFIG_SplitControllerUsesPreAutoRunTriggerDefaults(int const profile)
+{
+    return ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_A][0] == gamefunc_Jump
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_B][0] == gamefunc_Crouch
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_Y][0] == gamefunc_Quick_Kick
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_BACK][0] == gamefunc_Map
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_LEFTSTICK][0] == gamefunc_Run
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_RIGHTSTICK][0] == gamefunc_Center_View
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_LEFTSHOULDER][0] == gamefunc_Previous_Weapon
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_RIGHTSHOULDER][0] == gamefunc_Next_Weapon
+        && ud.config.SplitScreenJoystickDigitalFunctions[profile][CONTROLLER_AXIS_TRIGGERLEFT][1] == gamefunc_Alt_Fire
+        && ud.config.SplitScreenJoystickDigitalFunctions[profile][CONTROLLER_AXIS_TRIGGERRIGHT][1] == gamefunc_Fire;
+}
+
+static bool CONFIG_PrimaryControllerUsesAutoRunTriggerDefaultsWithLeftStickRun(void)
+{
+    return ud.config.JoystickFunctions[CONTROLLER_BUTTON_A][0] == gamefunc_Jump
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_B][0] == gamefunc_Crouch
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_Y][0] == gamefunc_Quick_Kick
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_BACK][0] == gamefunc_Map
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_LEFTSTICK][0] == gamefunc_Run
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_RIGHTSTICK][0] == gamefunc_Center_View
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_LEFTSHOULDER][0] == gamefunc_Previous_Weapon
+        && ud.config.JoystickFunctions[CONTROLLER_BUTTON_RIGHTSHOULDER][0] == gamefunc_Next_Weapon
+        && ud.config.JoystickDigitalFunctions[CONTROLLER_AXIS_TRIGGERLEFT][1] == gamefunc_Run
+        && ud.config.JoystickDigitalFunctions[CONTROLLER_AXIS_TRIGGERRIGHT][1] == gamefunc_Fire;
+}
+
+static bool CONFIG_SplitControllerUsesAutoRunTriggerDefaultsWithLeftStickRun(int const profile)
+{
+    return ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_A][0] == gamefunc_Jump
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_B][0] == gamefunc_Crouch
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_Y][0] == gamefunc_Quick_Kick
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_BACK][0] == gamefunc_Map
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_LEFTSTICK][0] == gamefunc_Run
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_RIGHTSTICK][0] == gamefunc_Center_View
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_LEFTSHOULDER][0] == gamefunc_Previous_Weapon
+        && ud.config.SplitScreenJoystickFunctions[profile][CONTROLLER_BUTTON_RIGHTSHOULDER][0] == gamefunc_Next_Weapon
+        && ud.config.SplitScreenJoystickDigitalFunctions[profile][CONTROLLER_AXIS_TRIGGERLEFT][1] == gamefunc_Run
+        && ud.config.SplitScreenJoystickDigitalFunctions[profile][CONTROLLER_AXIS_TRIGGERRIGHT][1] == gamefunc_Fire;
+}
+
 static void CONFIG_MigrateModernControllerDefaults(void)
 {
     if (CONFIG_PrimaryControllerUsesOldModernDefaults())
         CONFIG_SetGameControllerDefaults();
+    else if (CONFIG_PrimaryControllerUsesPreAutoRunTriggerDefaults())
+    {
+        CONFIG_SetJoystickDigitalAxisFunction(CONTROLLER_AXIS_TRIGGERLEFT, 1, gamefunc_Run);
+        CONFIG_SetJoystickButtonFunction(CONTROLLER_BUTTON_LEFTSTICK, 0, -1);
+    }
+    else if (CONFIG_PrimaryControllerUsesAutoRunTriggerDefaultsWithLeftStickRun())
+        CONFIG_SetJoystickButtonFunction(CONTROLLER_BUTTON_LEFTSTICK, 0, -1);
 
     CONFIG_MigrateAimSensitivityDefaults(ud.config.JoystickAnalogueAxes, ud.config.JoystickAnalogueSensitivity);
 
@@ -937,9 +1033,18 @@ static void CONFIG_MigrateModernControllerDefaults(void)
         int const profile = controllerIndex - 1;
         if (CONFIG_SplitControllerUsesOldModernDefaults(profile))
             CONFIG_SetSplitScreenGameControllerDefaults(controllerIndex);
+        else if (CONFIG_SplitControllerUsesPreAutoRunTriggerDefaults(profile))
+        {
+            CONFIG_SetSplitScreenJoystickDigitalAxisFunction(profile, CONTROLLER_AXIS_TRIGGERLEFT, 1, gamefunc_Run);
+            CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_LEFTSTICK, 0, -1);
+        }
+        else if (CONFIG_SplitControllerUsesAutoRunTriggerDefaultsWithLeftStickRun(profile))
+            CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_LEFTSTICK, 0, -1);
 
         CONFIG_MigrateAimSensitivityDefaults(ud.config.SplitScreenJoystickAnalogueAxes[profile], ud.config.SplitScreenJoystickAnalogueSensitivity[profile]);
     }
+
+    CONFIG_MigrateViewCenteringDefaultsOnce();
 }
 
 void CONFIG_SetGameControllerDefaultsClear()
@@ -1100,7 +1205,8 @@ int CONFIG_ReadSetup(void)
         Bsprintf(tempbuf, "SplitScreenPlayer%dAutoAim", playerNumber);
         SCRIPT_GetNumber(ud.config.scripthandle, "Controls", tempbuf, &ud.config.SplitScreenPlayerAutoAim[i]);
 
-        ud.config.SplitScreenPlayerAlwaysRun[i] = 1;
+        Bsprintf(tempbuf, "SplitScreenPlayer%dAlwaysRun", playerNumber);
+        SCRIPT_GetNumber(ud.config.scripthandle, "Controls", tempbuf, &ud.config.SplitScreenPlayerAlwaysRun[i]);
 
         Bsprintf(tempbuf, "SplitScreenPlayer%dWeaponSwitch", playerNumber);
         SCRIPT_GetNumber(ud.config.scripthandle, "Controls", tempbuf, &ud.config.SplitScreenPlayerWeaponSwitch[i]);
@@ -1124,7 +1230,7 @@ int CONFIG_ReadSetup(void)
         }
 
         ud.config.SplitScreenPlayerAutoAim[i] = clamp(ud.config.SplitScreenPlayerAutoAim[i], 0, 2);
-        ud.config.SplitScreenPlayerAlwaysRun[i] = 1;
+        ud.config.SplitScreenPlayerAlwaysRun[i] = ud.config.SplitScreenPlayerAlwaysRun[i] != 0;
         ud.config.SplitScreenPlayerWeaponSwitch[i] = clamp(ud.config.SplitScreenPlayerWeaponSwitch[i], 0, 7);
         ud.config.SplitScreenPlayerColor[i] = clamp(ud.config.SplitScreenPlayerColor[i], 0, MAXPALOOKUPS - 1);
         ud.config.SplitScreenPlayerTeam[i] = clamp(ud.config.SplitScreenPlayerTeam[i], 0, 3);
@@ -1341,6 +1447,10 @@ void CONFIG_WriteSetup(uint32_t flags)
             Bsprintf(buf, "ControllerAnalogSaturate%d", dummy);
             SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, ud.config.JoystickAnalogueSaturate[dummy], FALSE, FALSE);
         }
+
+        SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "ControllerAimWeight", ud.config.JoystickAimWeight, FALSE, FALSE);
+        SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "ControllerViewCentering", ud.config.JoystickViewCentering, FALSE, FALSE);
+        SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "ControllerAimAssist", ud.config.JoystickAimAssist, FALSE, FALSE);
     }
 
     for (int controllerIndex = 1; controllerIndex < MAXSPLITSCREENCONTROLLERS; ++controllerIndex)
@@ -1394,6 +1504,7 @@ void CONFIG_WriteSetup(uint32_t flags)
     SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "UseJoystick", ud.setup.usejoystick, FALSE, FALSE);
     SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "UseMouse", ud.setup.usemouse, FALSE, FALSE);
     SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "SeparateKeyboardMouseAndControllers", ud.config.SplitScreenSeparateKeyboardMouse, FALSE, FALSE);
+    SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "ViewCenteringDefaultMigrated", g_controllerViewCenteringDefaultMigrated, FALSE, FALSE);
     if (!CommandName && !CONFIG_IsBlankPlayerName(szPlayerName))
         Bstrncpyz(ud.config.SplitScreenPlayerName[0], szPlayerName, sizeof(ud.config.SplitScreenPlayerName[0]));
 
@@ -1409,7 +1520,7 @@ void CONFIG_WriteSetup(uint32_t flags)
         SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, ud.config.SplitScreenPlayerAutoAim[i], FALSE, FALSE);
 
         Bsprintf(buf, "SplitScreenPlayer%dAlwaysRun", playerNumber);
-        SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, 1, FALSE, FALSE);
+        SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, ud.config.SplitScreenPlayerAlwaysRun[i], FALSE, FALSE);
 
         Bsprintf(buf, "SplitScreenPlayer%dWeaponSwitch", playerNumber);
         SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, ud.config.SplitScreenPlayerWeaponSwitch[i], FALSE, FALSE);

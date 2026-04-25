@@ -866,7 +866,7 @@ boost:
     return explosion;
 }
 
-static int S_PlaySoundResolved(int sndnum)
+static int S_PlaySoundResolved(int sndnum, int16_t const owner = -1)
 {
     if (!ud.config.SoundToggle)
         return -1;
@@ -908,7 +908,7 @@ static int S_PlaySoundResolved(int sndnum)
                                                 ? fix16_to_float(snd->volume) * ((float) ud.config.VoiceVolume / 255.f)
                                                 : fix16_to_float(snd->volume) * ((float) ud.config.FXVolume / 255.f));
 
-    S_FillVoiceInfo(&snd->voices[sndSlot], -1, -1, UINT16_MAX);
+    S_FillVoiceInfo(&snd->voices[sndSlot], owner, -1, UINT16_MAX);
 
     int const voice = (snd->flags & SF_LOOP)
                         ? FX_Play(snd->ptr, snd->len, 0, -1, pitch, LOUDESTVOLUME, LOUDESTVOLUME,
@@ -977,7 +977,7 @@ int S_PlaySound3D(int num, int spriteNum, const vec3_t& pos)
     }
 
     if (S_IsLocalSplitScreenPlayerSprite(spriteNum))
-        return S_PlaySoundResolved(sndNum);
+        return S_PlaySoundResolved(sndNum, spriteNum);
 
     int32_t sndist, sndang;
     int listenerPlayer = screenpeek;

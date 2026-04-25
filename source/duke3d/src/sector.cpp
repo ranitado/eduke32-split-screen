@@ -2680,7 +2680,7 @@ void P_HandleSharedKeys(int playerNum)
         pPlayer->aim_mode |= ((extBits>>EK_GAMEPAD_AIM_ASSIST)&1)<<2;
 
         // g_skipReturnToCenter workaround: playerBits and extBits are both briefly set to 0 after CON_SAVE
-        if (!g_skipReturnToCenter && (pPlayer->aim_mode < (aimMode & 3)))
+        if (!g_skipReturnToCenter && !(extBits & BIT(EK_GAMEPAD_PRECISION_AIM)) && (pPlayer->aim_mode < (aimMode & 3)))
             pPlayer->return_to_center = 9;
         else
             g_skipReturnToCenter = false;

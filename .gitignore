@@ -3,6 +3,7 @@ obj/
 obj.win64/
 dist/
 release/
+legacy/
 custom/mainScreenCover.png
 custom/hud/*_original_tile*.png
 custom/hud/rpggunwide.png

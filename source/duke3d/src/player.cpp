@@ -38,6 +38,8 @@ hudweapon_t hudweap;
 static int32_t g_snum;
 #endif
 
+static constexpr float G_JOYSTICK_VERTICAL_AIM_FEEL_SCALE = 1.f;
+
 static int32_t G_GetSplitScreenViewportForPlayer(int32_t const playerNum, splitscreen_viewport_t * const viewport)
 {
     if (viewport == nullptr || !G_HaveSplitScreen())
@@ -102,6 +104,37 @@ static int32_t G_GetJoystickAimAssistForPlayer(int32_t const playerNum)
 {
     int const profile = G_GetSplitScreenControllerProfileForPlayer(playerNum);
     return profile == 0 ? ud.config.JoystickAimAssist : ud.config.SplitScreenJoystickAimAssist[profile - 1];
+}
+
+static int32_t G_FindJoystickAnalogAxisForPlayer(int32_t const playerNum, int32_t const analogFunction, int32_t const fallbackAxis)
+{
+    int const profile = G_GetSplitScreenControllerProfileForPlayer(playerNum);
+    int32_t const * const analogAxes = profile == 0 ? ud.config.JoystickAnalogueAxes : ud.config.SplitScreenJoystickAnalogueAxes[profile - 1];
+
+    for (int axis = 0; axis < MAXJOYAXES; ++axis)
+        if (analogAxes[axis] == analogFunction)
+            return axis;
+
+    return fallbackAxis;
+}
+
+static float G_GetJoystickAnalogSensitivityForPlayer(int32_t const playerNum, int32_t const analogFunction, int32_t const fallbackAxis)
+{
+    int const profile = G_GetSplitScreenControllerProfileForPlayer(playerNum);
+    float const * const sensitivity = profile == 0 ? ud.config.JoystickAnalogueSensitivity : ud.config.SplitScreenJoystickAnalogueSensitivity[profile - 1];
+    int32_t const axis = G_FindJoystickAnalogAxisForPlayer(playerNum, analogFunction, fallbackAxis);
+
+    return (unsigned)axis < MAXJOYAXES ? sensitivity[axis] : DEFAULTJOYSTICKANALOGUESENSITIVITY;
+}
+
+static int32_t G_ApplyPrecisionAimScale(int32_t const value, float const configuredSensitivity)
+{
+    constexpr float precisionSensitivity = 1.f;
+
+    if (!value || configuredSensitivity <= precisionSensitivity)
+        return value;
+
+    return Blrintf(value * (precisionSensitivity / configuredSensitivity));
 }
 
 static void P_AddForceFeedbackForPlayer(int32_t const playerNum, int const lo, int const hi, int const time)
@@ -3141,6 +3174,7 @@ enddisplayweapon:;
 #define NORMALTURN    15
 #define PREAMBLETURN  5
 #define NORMALKEYMOVE 40
+#define WALKKEYMOVE   50
 #define MAXVEL        ((NORMALKEYMOVE*2)+10)
 #define MAXSVEL       ((NORMALKEYMOVE*2)+10)
 #define MAXANGVEL     1024
@@ -3203,7 +3237,19 @@ void P_UpdateAngles(int const playerNum, input_t &input)
 
     thisPlayer.lastViewUpdate = currentNanoTicks;
 
-    auto scaleToInterval = [=](double x) { return x * REALGAMETICSPERSEC / ((double)timerGetNanoTickRate() / min<double>(elapsedInputTicks, timerGetNanoTickRate())); };
+    auto scaleToIntervalForElapsed = [=](double x, uint64_t elapsedTicks)
+    {
+        return x * REALGAMETICSPERSEC / ((double)timerGetNanoTickRate() / min<double>(elapsedTicks, timerGetNanoTickRate()));
+    };
+    auto scaleToInterval = [=](double x) { return scaleToIntervalForElapsed(x, elapsedInputTicks); };
+
+    bool const precisionAim = (input.extbits & BIT(EK_GAMEPAD_PRECISION_AIM)) != 0;
+    bool const viewCentering = (input.extbits & BIT(EK_GAMEPAD_CENTERING)) != 0;
+    if (precisionAim)
+    {
+        pPlayer->return_to_center = 0;
+        thisPlayer.horizRecenter = false;
+    }
 
     int const movementLocked = P_CheckLockedMovement(playerNum);
 
@@ -3268,16 +3314,21 @@ void P_UpdateAngles(int const playerNum, input_t &input)
     }
 
     // view centering is only used if there's no input on the right stick (looking/aiming) and the player is moving forward/backward, not strafing
-    if (pPlayer->aim_mode&AM_CENTERING && !input.q16avel && !input.q16horz && input.fvel)
+    if (!precisionAim && viewCentering && !input.q16avel && !input.q16horz && input.fvel)
     {
         int const viewCentering = G_GetJoystickViewCenteringForPlayer(playerNum);
+        uint64_t viewCenteringElapsedTicks = elapsedInputTicks;
+        if (G_HaveSplitScreen() && playerNum == myconnectindex)
+            viewCenteringElapsedTicks = max<uint64_t>(viewCenteringElapsedTicks, timerGetNanoTickRate() / REALGAMETICSPERSEC);
+
+        auto scaleViewCenteringToInterval = [=](double x) { return scaleToIntervalForElapsed(x, viewCenteringElapsedTicks); };
 
         if (pPlayer->q16horiz >= F16(99) && pPlayer->q16horiz <= F16(100))
             thisPlayer.horizRecenter = true;
         else if (pPlayer->q16horiz < F16(99))
-            pPlayer->q16horiz = fix16_min(fix16_sadd(pPlayer->q16horiz, fix16_from_float(scaleToInterval(viewCentering))), F16(100));
+            pPlayer->q16horiz = fix16_min(fix16_sadd(pPlayer->q16horiz, fix16_from_float(scaleViewCenteringToInterval(viewCentering))), F16(100));
         else if (pPlayer->q16horiz > F16(100))
-            pPlayer->q16horiz = fix16_max(fix16_ssub(pPlayer->q16horiz, fix16_from_float(scaleToInterval(viewCentering))), F16(100));
+            pPlayer->q16horiz = fix16_max(fix16_ssub(pPlayer->q16horiz, fix16_from_float(scaleViewCenteringToInterval(viewCentering))), F16(100));
     }
 
     int32_t Zvel, shootAng;
@@ -3412,10 +3463,18 @@ void P_GetInput(int const playerNum)
     }
 
     // JBF: Run key behaviour is selectable
-    int const       playerRunning = (ud.runkey_mode) ? (BUTTON(gamefunc_Run) | 1) : (1 ^ BUTTON(gamefunc_Run));
+    bool const      alwaysRun     = G_GetLocalPlayerAlwaysRunSetting(playerNum) != 0;
+    bool const      runHeld       = BUTTON(gamefunc_Run) != 0;
+    bool const      precisionAim  = !suppressJoystickForSplitScreen && alwaysRun && runHeld && CONTROL_LastSeenInput == LastSeenInput::Joystick;
+    int const       playerRunning = alwaysRun ? (ud.runkey_mode ? 1 : !runHeld) : runHeld;
     int const       turnAmount    = playerRunning ? (NORMALTURN << 1) : NORMALTURN;
-    int const       keyMove       = playerRunning ? (NORMALKEYMOVE << 1) : NORMALKEYMOVE;
+    int const       keyMove       = playerRunning ? (NORMALKEYMOVE << 1) : WALKKEYMOVE;
     constexpr float analogExtent  = 32767.f;  // KEEPINSYNC sdlayer.cpp
+    if (precisionAim)
+    {
+        info.dyaw = G_ApplyPrecisionAimScale(info.dyaw, G_GetJoystickAnalogSensitivityForPlayer(playerNum, analog_turning, CONTROLLER_AXIS_RIGHTX));
+        info.dpitch = G_ApplyPrecisionAimScale(info.dpitch, G_GetJoystickAnalogSensitivityForPlayer(playerNum, analog_lookingupanddown, CONTROLLER_AXIS_RIGHTY));
+    }
 
     input_t input {};
 
@@ -3451,7 +3510,7 @@ void P_GetInput(int const playerNum)
 
     if (ud.mouseflip) input.q16horz = -input.q16horz;
 
-    input.q16horz = fix16_ssub(input.q16horz, fix16_from_float(scaleToInterval(info.dpitch * 16.0 / analogExtent)));
+    input.q16horz = fix16_ssub(input.q16horz, fix16_from_float(scaleToInterval(info.dpitch * (16.0 * G_JOYSTICK_VERTICAL_AIM_FEEL_SCALE) / analogExtent)));
     input.svel -= lrint(scaleToInterval(info.dx * keyMove / analogExtent));
     input.fvel -= lrint(scaleToInterval(info.dz * keyMove / analogExtent));
 
@@ -3601,10 +3660,11 @@ void P_GetInput(int const playerNum)
     localInput.extbits |= BUTTON(gamefunc_Turn_Right) << EK_TURN_RIGHT;
     localInput.extbits |= BUTTON(gamefunc_Alt_Fire) << EK_ALT_FIRE;
 
-    if (CONTROL_LastSeenInput == LastSeenInput::Joystick)
+    if (!suppressJoystickForSplitScreen && CONTROL_LastSeenInput == LastSeenInput::Joystick)
     {
-        localInput.extbits |= (!!G_GetJoystickViewCenteringForPlayer(playerNum)) << EK_GAMEPAD_CENTERING;
+        localInput.extbits |= (!!G_GetJoystickViewCenteringForPlayer(playerNum) && !precisionAim) << EK_GAMEPAD_CENTERING;
         localInput.extbits |= (!!G_GetJoystickAimAssistForPlayer(playerNum)) << EK_GAMEPAD_AIM_ASSIST;
+        localInput.extbits |= precisionAim << EK_GAMEPAD_PRECISION_AIM;
     }
 
     // for access in the events

@@ -395,6 +395,32 @@ static void G_DrawSplitScreenTintOverlay(int32_t const playerNum, splitscreen_vi
     if ((r | g | b) == 0)
         return;
 
+#ifdef USE_OPENGL
+    if (videoGetRenderMode() >= REND_POLYMOST)
+    {
+        uint8_t const alpha = (uint8_t)clamp(tint.maxf << 2, 0, 252);
+
+        if (alpha == 0)
+            return;
+
+        renderDisableFog();
+        polymost_useColorOnly(true);
+        polymostSet2dView();
+
+        buildgl_setDisabled(GL_ALPHA_TEST);
+        buildgl_setDisabled(GL_DEPTH_TEST);
+        buildgl_setEnabled(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glColor4ub((uint8_t)r, (uint8_t)g, (uint8_t)b, alpha);
+        glRecti(viewport.x, viewport.y, viewport.x + viewport.width, viewport.y + viewport.height);
+        glColor4ub(255, 255, 255, 255);
+
+        polymost_useColorOnly(false);
+        renderEnableFog();
+        return;
+    }
+#endif
+
     if (max(max(r, g), b) < 96)
     {
         if (r >= g && r >= b)

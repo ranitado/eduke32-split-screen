@@ -6811,14 +6811,26 @@ static void G_MergePrimarySplitScreenGamepadInput(input_t const &gamepadInput)
 
     uint32_t const localWeaponBits   = localInput.bits & SK_WEAPON_MASK;
     uint32_t const gamepadWeaponBits = gamepadInput.bits & SK_WEAPON_MASK;
+    bool const     gamepadMoving     = gamepadInput.fvel != 0 || gamepadInput.svel != 0;
+
+    if (gamepadMoving)
+        localInput.bits &= ~BIT(SK_RUN);
 
     localInput.bits |= gamepadInput.bits & ~SK_WEAPON_MASK;
     if (localWeaponBits == 0)
         localInput.bits |= gamepadWeaponBits;
 
     localInput.extbits |= gamepadInput.extbits;
-    localInput.fvel = (int16_t)clamp<int32_t>(localInput.fvel + gamepadInput.fvel, -maxLocalInputVelocity, maxLocalInputVelocity);
-    localInput.svel = (int16_t)clamp<int32_t>(localInput.svel + gamepadInput.svel, -maxLocalInputVelocity, maxLocalInputVelocity);
+    if (gamepadMoving)
+    {
+        localInput.fvel = gamepadInput.fvel;
+        localInput.svel = gamepadInput.svel;
+    }
+    else
+    {
+        localInput.fvel = (int16_t)clamp<int32_t>(localInput.fvel + gamepadInput.fvel, -maxLocalInputVelocity, maxLocalInputVelocity);
+        localInput.svel = (int16_t)clamp<int32_t>(localInput.svel + gamepadInput.svel, -maxLocalInputVelocity, maxLocalInputVelocity);
+    }
     localInput.q16avel = fix16_sadd(localInput.q16avel, gamepadInput.q16avel);
 
     float const horizAngle = atan2f(localInput.q16horz, F16(128)) * (512.f / fPI) + fix16_to_float(gamepadInput.q16horz);
@@ -7048,7 +7060,7 @@ int app_main(int argc, char const* const* argv)
 #endif
     CONFIG_ReadSetup();
 
-#if defined(_WIN32) && !defined (EDUKE32_STANDALONE)
+#if defined(_WIN32) && !defined (EDUKE32_STANDALONE) && !defined(SPLITSCREEN_MOD_HACKS)
     if (ud.config.CheckForUpdates == 1)
     {
         if (time(NULL) - ud.config.LastUpdateCheck > UPDATEINTERVAL)

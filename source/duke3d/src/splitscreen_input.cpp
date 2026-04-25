@@ -38,12 +38,17 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 namespace
 {
-constexpr int TRIGGER_DEADZONE  = 12000;
+constexpr int DIGITAL_AXIS_DEADZONE = 12000;
+constexpr int RUN_TRIGGER_DEADZONE  = 24000;
+constexpr int RUN_TRIGGER_DELTA     = 6000;
 constexpr int NORMALKEYMOVE     = 40;  // KEEPINSYNC player.cpp
-constexpr int MAXVEL_LOCAL      = ((NORMALKEYMOVE * 2) + 10);
-constexpr int MAXSVEL_LOCAL     = ((NORMALKEYMOVE * 2) + 10);
+constexpr int WALKKEYMOVE       = 50;
+constexpr int RUNKEYMOVE        = NORMALKEYMOVE << 1;
 constexpr float TURN_RATE       = 28.f;
-constexpr float LOOK_RATE       = 18.f;
+constexpr float VERTICAL_AIM_FEEL_SCALE = 1.2f;
+constexpr float LOOK_RATE       = TURN_RATE * 0.25f * VERTICAL_AIM_FEEL_SCALE;
+constexpr float PRECISION_AIM_SENS_X = 1.f;
+constexpr float PRECISION_AIM_SENS_Y = 1.f;
 constexpr int MAX_LOCAL_PLAYERS = 4;
 constexpr uint8_t WEAPON_REPEAT_INITIAL_DELAY = 12;
 constexpr uint8_t WEAPON_REPEAT_INTERVAL = 4;
@@ -87,6 +92,8 @@ enum : int
 static input_t g_splitScreenLocalInputs[MAXPLAYERS];
 static uint32_t g_splitScreenPrevButtons[MAXPLAYERS];
 static uint8_t g_splitScreenPrevAxisActive[MAXPLAYERS][GAMEPAD_AXIS_COUNT][2];
+static int16_t g_splitScreenRunTriggerBaseline[MAXPLAYERS][GAMEPAD_AXIS_COUNT];
+static uint8_t g_splitScreenRunTriggerBaselineSet[MAXPLAYERS][GAMEPAD_AXIS_COUNT];
 static uint8_t g_splitScreenPadConnected[MAXPLAYERS];
 static int8_t g_splitScreenWeaponRepeatDir[MAXPLAYERS];
 static uint8_t g_splitScreenWeaponRepeatDelay[MAXPLAYERS];
@@ -209,6 +216,11 @@ static int32_t *G_GetMutableConfiguredAnalogInvert(int const controllerProfile)
     return controllerProfile == 0 ? ud.config.JoystickAnalogueInvert : ud.config.SplitScreenJoystickAnalogueInvert[controllerProfile - 1];
 }
 
+static int32_t *G_GetMutableConfiguredViewCentering(int const controllerProfile)
+{
+    return controllerProfile == 0 ? &ud.config.JoystickViewCentering : &ud.config.SplitScreenJoystickViewCentering[controllerProfile - 1];
+}
+
 static bool G_GamepadButtonIndexHeld(gamepadstate_t const &state, int const button)
 {
     return (unsigned)button < 32u && G_GamepadButtonHeld(state.buttons, button);
@@ -224,7 +236,33 @@ static bool G_GamepadDigitalAxisHeld(gamepadstate_t const &state, int const axis
     if ((unsigned)axis >= GAMEPAD_AXIS_COUNT)
         return false;
 
-    return polarity ? state.axes[axis] > TRIGGER_DEADZONE : state.axes[axis] < -TRIGGER_DEADZONE;
+    return polarity ? state.axes[axis] > DIGITAL_AXIS_DEADZONE : state.axes[axis] < -DIGITAL_AXIS_DEADZONE;
+}
+
+static bool G_GamepadRunTriggerHeld(int const playerNum, gamepadstate_t const &state, int const axis, int const polarity)
+{
+    if ((unsigned)playerNum >= MAXPLAYERS || (unsigned)axis >= GAMEPAD_AXIS_COUNT)
+        return false;
+
+    if (axis != GAMEPAD_AXIS_TRIGGERLEFT && axis != GAMEPAD_AXIS_TRIGGERRIGHT)
+        return G_GamepadDigitalAxisHeld(state, axis, polarity);
+
+    int16_t const value = state.axes[axis];
+
+    if (!g_splitScreenRunTriggerBaselineSet[playerNum][axis])
+    {
+        g_splitScreenRunTriggerBaseline[playerNum][axis] = value;
+        g_splitScreenRunTriggerBaselineSet[playerNum][axis] = 1;
+        return false;
+    }
+
+    int16_t &baseline = g_splitScreenRunTriggerBaseline[playerNum][axis];
+    if (polarity ? value < baseline : value > baseline)
+        baseline = value;
+
+    return polarity
+        ? value > max<int>(RUN_TRIGGER_DEADZONE, baseline + RUN_TRIGGER_DELTA)
+        : value < min<int>(-RUN_TRIGGER_DEADZONE, baseline - RUN_TRIGGER_DELTA);
 }
 
 static bool G_GamepadDigitalAxisPressed(int const playerNum, gamepadstate_t const &state, int const axis, int const polarity)
@@ -246,6 +284,22 @@ static bool G_GamepadFunctionHeld(int const controllerProfile, gamepadstate_t co
     for (int axis = 0; axis < GAMEPAD_AXIS_COUNT; ++axis)
         for (int polarity = 0; polarity < 2; ++polarity)
             if (digitalFunctions[axis][polarity] == gameFunction && G_GamepadDigitalAxisHeld(state, axis, polarity))
+                return true;
+
+    return false;
+}
+
+static bool G_GamepadRunHeld(int const playerNum, int const controllerProfile, gamepadstate_t const &state)
+{
+    auto const buttonFunctions = G_GetConfiguredButtonFunctions(controllerProfile);
+    for (int button = 0; button < MAXJOYBUTTONSANDHATS; ++button)
+        if (buttonFunctions[button][0] == gamefunc_Run && G_GamepadButtonIndexHeld(state, button))
+            return true;
+
+    auto const digitalFunctions = G_GetConfiguredDigitalFunctions(controllerProfile);
+    for (int axis = 0; axis < GAMEPAD_AXIS_COUNT; ++axis)
+        for (int polarity = 0; polarity < 2; ++polarity)
+            if (digitalFunctions[axis][polarity] == gamefunc_Run && G_GamepadRunTriggerHeld(playerNum, state, axis, polarity))
                 return true;
 
     return false;
@@ -325,6 +379,20 @@ static int16_t G_GetConfiguredAnalogValue(int const controllerProfile, gamepadst
 {
     int const axis = G_FindConfiguredAnalogAxis(controllerProfile, analogFunction, fallbackAxis);
     return G_ApplyConfiguredAxisSettings(controllerProfile, axis, state.axes[axis]);
+}
+
+static float G_GetPrecisionAimScale(int const controllerProfile, int const analogFunction, int const fallbackAxis, float const precisionSensitivity)
+{
+    int const axis = G_FindConfiguredAnalogAxis(controllerProfile, analogFunction, fallbackAxis);
+    if ((unsigned)axis >= GAMEPAD_AXIS_COUNT)
+        return 1.f;
+
+    auto const sensitivity = G_GetConfiguredAnalogSensitivity(controllerProfile);
+    float const configuredSensitivity = sensitivity[axis];
+    if (configuredSensitivity <= precisionSensitivity)
+        return 1.f;
+
+    return precisionSensitivity / configuredSensitivity;
 }
 
 static bool G_IsSecondarySplitScreenPlayer(int const playerNum)
@@ -411,6 +479,7 @@ enum split_config_player_entry_t
     SPLIT_CONFIG_PLAYER_COLOR,
     SPLIT_CONFIG_PLAYER_TEAM,
     SPLIT_CONFIG_PLAYER_AUTOAIM,
+    SPLIT_CONFIG_PLAYER_ALWAYS_RUN,
     SPLIT_CONFIG_PLAYER_EQUIP_PICKUPS,
 };
 
@@ -429,10 +498,16 @@ static split_config_player_entry_t G_GetSplitScreenPlayerMenuEntry(int const ind
         if (index == 1)
             return SPLIT_CONFIG_PLAYER_TEAM;
 
-        return index == 2 ? SPLIT_CONFIG_PLAYER_AUTOAIM : SPLIT_CONFIG_PLAYER_EQUIP_PICKUPS;
+        if (index == 2)
+            return SPLIT_CONFIG_PLAYER_AUTOAIM;
+
+        return index == 3 ? SPLIT_CONFIG_PLAYER_ALWAYS_RUN : SPLIT_CONFIG_PLAYER_EQUIP_PICKUPS;
     }
 
-    return index == 1 ? SPLIT_CONFIG_PLAYER_AUTOAIM : SPLIT_CONFIG_PLAYER_EQUIP_PICKUPS;
+    if (index == 1)
+        return SPLIT_CONFIG_PLAYER_AUTOAIM;
+
+    return index == 2 ? SPLIT_CONFIG_PLAYER_ALWAYS_RUN : SPLIT_CONFIG_PLAYER_EQUIP_PICKUPS;
 }
 
 static int G_GetSplitScreenConfigMenuEntryCount(split_config_menu_page_t const page)
@@ -440,8 +515,8 @@ static int G_GetSplitScreenConfigMenuEntryCount(split_config_menu_page_t const p
     switch (page)
     {
         case SPLIT_CONFIG_MENU_MAIN:       return 2;
-        case SPLIT_CONFIG_MENU_PLAYER:     return G_ShowSplitScreenPlayerTeamOption() ? 4 : 3;
-        case SPLIT_CONFIG_MENU_CONTROLLER: return 4;
+        case SPLIT_CONFIG_MENU_PLAYER:     return G_ShowSplitScreenPlayerTeamOption() ? 5 : 4;
+        case SPLIT_CONFIG_MENU_CONTROLLER: return 5;
         default:                           return 0;
     }
 }
@@ -493,6 +568,9 @@ static void G_ModifySplitScreenConfigMenuEntry(int const playerNum, int const co
                     ud.config.SplitScreenPlayerAutoAim[configIndex] = s_splitMenuAutoAimValues[option];
                     break;
                 }
+                case SPLIT_CONFIG_PLAYER_ALWAYS_RUN:
+                    ud.config.SplitScreenPlayerAlwaysRun[configIndex] = !ud.config.SplitScreenPlayerAlwaysRun[configIndex];
+                    break;
                 case SPLIT_CONFIG_PLAYER_EQUIP_PICKUPS:
                     G_SetEquipPickupOption(playerNum, !G_GetEquipPickupOption(ud.config.SplitScreenPlayerWeaponSwitch[configIndex]));
                     break;
@@ -516,6 +594,11 @@ static void G_ModifySplitScreenConfigMenuEntry(int const playerNum, int const co
                 int const axis = G_FindConfiguredAnalogAxis(controllerProfile, analog_lookingupanddown, CONTROLLER_AXIS_RIGHTY);
                 auto * const invert = G_GetMutableConfiguredAnalogInvert(controllerProfile);
                 invert[axis] = !invert[axis];
+            }
+            else if (menu.current == 3)
+            {
+                int32_t * const viewCentering = G_GetMutableConfiguredViewCentering(controllerProfile);
+                *viewCentering = clamp<int32_t>(*viewCentering + direction, 0, 8);
             }
             else
                 saveConfig = false;
@@ -548,7 +631,7 @@ static void G_ActivateSplitScreenConfigMenuEntry(int const playerNum, int const 
             break;
 
         case SPLIT_CONFIG_MENU_CONTROLLER:
-            if (menu.current == 3)
+            if (menu.current == 4)
             {
                 if (controllerProfile == 0)
                     CONFIG_SetGameControllerDefaults();
@@ -584,7 +667,7 @@ static void G_UpdateSplitScreenConfigMenu(int const playerNum, int const control
     bool const acceptPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_A);
     bool const backPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_B);
     bool const canModifyCurrentEntry = (menu.page == SPLIT_CONFIG_MENU_PLAYER)
-                                    || (menu.page == SPLIT_CONFIG_MENU_CONTROLLER && menu.current < 3);
+                                    || (menu.page == SPLIT_CONFIG_MENU_CONTROLLER && menu.current < 4);
 
     if (upPressed)
     {
@@ -655,6 +738,9 @@ static void G_FormatSplitScreenConfigMenuLine(int const playerNum, int const con
                     Bsnprintf(buffer, bufferSize, "Auto aim: %s", G_GetIndexedName(s_splitMenuAutoAimNames, ARRAY_SIZE(s_splitMenuAutoAimNames), option));
                     break;
                 }
+                case SPLIT_CONFIG_PLAYER_ALWAYS_RUN:
+                    Bsnprintf(buffer, bufferSize, "Auto run: %s", s_splitMenuNoYesNames[ud.config.SplitScreenPlayerAlwaysRun[configIndex] != 0]);
+                    break;
                 case SPLIT_CONFIG_PLAYER_EQUIP_PICKUPS:
                     Bsnprintf(buffer, bufferSize, "Equip pickups: %s", s_splitMenuEquipPickupNames[G_GetEquipPickupOption(ud.config.SplitScreenPlayerWeaponSwitch[configIndex])]);
                     break;
@@ -680,6 +766,8 @@ static void G_FormatSplitScreenConfigMenuLine(int const playerNum, int const con
                 Bsnprintf(buffer, bufferSize, "Inverted aiming: %s", s_splitMenuNoYesNames[invert[axis] != 0]);
             }
             else if (menu.current == 3)
+                Bsnprintf(buffer, bufferSize, "View centering: %d", G_GetConfiguredViewCentering(controllerProfile));
+            else if (menu.current == 4)
                 Bsnprintf(buffer, bufferSize, "Reset to defaults");
             break;
 
@@ -693,6 +781,27 @@ static void G_DrawSplitScreenConfigMenuDim(splitscreen_viewport_t const &viewpor
 {
     if (viewport.width <= 0 || viewport.height <= 0)
         return;
+
+#ifdef USE_OPENGL
+    if (videoGetRenderMode() >= REND_POLYMOST)
+    {
+        renderDisableFog();
+        polymost_useColorOnly(true);
+        polymostSet2dView();
+
+        buildgl_setDisabled(GL_ALPHA_TEST);
+        buildgl_setDisabled(GL_DEPTH_TEST);
+        buildgl_setEnabled(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glColor4ub(0, 0, 0, 192);
+        glRecti(viewport.x, viewport.y, viewport.x + viewport.width, viewport.y + viewport.height);
+        glColor4ub(255, 255, 255, 255);
+
+        polymost_useColorOnly(false);
+        renderEnableFog();
+        return;
+    }
+#endif
 
     for (int y = viewport.y; y < viewport.y + viewport.height; y += 4)
     {
@@ -852,6 +961,7 @@ static void G_ClearSplitScreenPadInput(int const playerNum)
     g_splitScreenLocalInputs[playerNum] = {};
     g_splitScreenPrevButtons[playerNum] = 0;
     memset(g_splitScreenPrevAxisActive[playerNum], 0, sizeof(g_splitScreenPrevAxisActive[playerNum]));
+    memset(g_splitScreenRunTriggerBaselineSet[playerNum], 0, sizeof(g_splitScreenRunTriggerBaselineSet[playerNum]));
     g_splitScreenPadConnected[playerNum] = 0;
     g_splitScreenWeaponRepeatDir[playerNum] = 0;
     g_splitScreenWeaponRepeatDelay[playerNum] = 0;
@@ -967,14 +1077,22 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
     bool const dpadSelect = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Dpad_Select);
     bool const dpadAiming = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Dpad_Aiming);
 
-    input.fvel    = (int16_t)-G_ScaleAxisToVelocity(G_GetConfiguredAnalogValue(controllerProfile, state, analog_moving, GAMEPAD_AXIS_LEFTY), MAXVEL_LOCAL);
-    input.svel    = (int16_t)-G_ScaleAxisToVelocity(G_GetConfiguredAnalogValue(controllerProfile, state, analog_strafing, GAMEPAD_AXIS_LEFTX), MAXSVEL_LOCAL);
-    input.q16avel = G_ScaleAxisToAngle(G_GetConfiguredAnalogValue(controllerProfile, state, analog_turning, GAMEPAD_AXIS_RIGHTX), TURN_RATE);
-    input.q16horz = -G_ScaleAxisToAngle(G_GetConfiguredAnalogValue(controllerProfile, state, analog_lookingupanddown, GAMEPAD_AXIS_RIGHTY), LOOK_RATE);
+    bool const alwaysRun = G_GetLocalPlayerAlwaysRunSetting(playerNum) != 0;
+    bool const runHeld = G_GamepadRunHeld(playerNum, controllerProfile, state);
+    bool const precisionAim = alwaysRun && runHeld;
+    bool const playerRunning = alwaysRun ? (ud.runkey_mode ? true : !runHeld) : runHeld;
+    int const moveLimit = playerRunning ? RUNKEYMOVE : WALKKEYMOVE;
+    float const aimScaleX = precisionAim ? G_GetPrecisionAimScale(controllerProfile, analog_turning, GAMEPAD_AXIS_RIGHTX, PRECISION_AIM_SENS_X) : 1.f;
+    float const aimScaleY = precisionAim ? G_GetPrecisionAimScale(controllerProfile, analog_lookingupanddown, GAMEPAD_AXIS_RIGHTY, PRECISION_AIM_SENS_Y) : 1.f;
+
+    input.fvel    = (int16_t)-G_ScaleAxisToVelocity(G_GetConfiguredAnalogValue(controllerProfile, state, analog_moving, GAMEPAD_AXIS_LEFTY), moveLimit);
+    input.svel    = (int16_t)-G_ScaleAxisToVelocity(G_GetConfiguredAnalogValue(controllerProfile, state, analog_strafing, GAMEPAD_AXIS_LEFTX), moveLimit);
+    input.q16avel = G_ScaleAxisToAngle(G_GetConfiguredAnalogValue(controllerProfile, state, analog_turning, GAMEPAD_AXIS_RIGHTX), TURN_RATE * aimScaleX);
+    input.q16horz = -G_ScaleAxisToAngle(G_GetConfiguredAnalogValue(controllerProfile, state, analog_lookingupanddown, GAMEPAD_AXIS_RIGHTY), LOOK_RATE * aimScaleY);
     G_ApplyConfiguredAimWeight(controllerProfile, input);
 
     input.bits |= (1u << SK_AIMMODE);
-    input.bits |= ((uint32_t)(G_GetLocalPlayerAlwaysRunSetting(playerNum) != 0) << SK_RUN);
+    input.bits |= ((uint32_t)playerRunning << SK_RUN);
     input.bits |= ((uint32_t)G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Jump) << SK_JUMP);
     input.bits |= ((uint32_t)(G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Crouch)
                            || G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Toggle_Crouch)) << SK_CROUCH);
@@ -1061,8 +1179,9 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
     input.extbits |= ((uint32_t)(G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Strafe_Right) || input.svel < 0) << EK_STRAFE_RIGHT);
     input.extbits |= ((uint32_t)(G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Turn_Left) || input.q16avel < 0) << EK_TURN_LEFT);
     input.extbits |= ((uint32_t)(G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Turn_Right) || input.q16avel > 0) << EK_TURN_RIGHT);
-    input.extbits |= ((uint32_t)(G_GetConfiguredViewCentering(controllerProfile) != 0) << EK_GAMEPAD_CENTERING);
+    input.extbits |= ((uint32_t)(G_GetConfiguredViewCentering(controllerProfile) != 0 && !precisionAim) << EK_GAMEPAD_CENTERING);
     input.extbits |= ((uint32_t)(G_GetConfiguredAimAssist(controllerProfile) != 0) << EK_GAMEPAD_AIM_ASSIST);
+    input.extbits |= ((uint32_t)precisionAim << EK_GAMEPAD_PRECISION_AIM);
 
     if (!ud.recstat)
         P_UpdateAngles(playerNum, input);
