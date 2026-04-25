@@ -60,7 +60,7 @@ void G_QuitIfStartupEscapePressed(void)
 
 static void G_DrawStartupVersionText(void)
 {
-    minitext(1, 193, "V0.1", 0, 2 + 8 + 16 + 128);
+    minitext(1, 193, "V0.2", 0, 2 + 8 + 16 + 128);
 }
 
 ////////// OFTEN-USED FEW-LINERS //////////

@@ -31,7 +31,7 @@ This repository and its releases do **not** include `DUKE3D.GRP` or any commerci
 1. Download `eduke32-split-screen-v0.2-windows-x64.zip` from the GitHub release.
 2. Extract it to a new folder.
 3. Copy your legal `DUKE3D.GRP` into that same folder.
-4. Run `eduke32.exe`.
+4. Run `eduke32-split-screen.exe`.
 
 Do not copy old `eduke32.cfg` files into the release folder unless you want to keep existing settings. For the intended default controls, start with a fresh config.
 

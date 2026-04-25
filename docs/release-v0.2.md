@@ -13,7 +13,7 @@ Use `eduke32-split-screen-v0.2-windows-x64.zip` from the GitHub release.
 
 ## Installation
 
-Extract the ZIP to a new folder and copy your legal `DUKE3D.GRP` into that folder before running `eduke32.exe`.
+Extract the ZIP to a new folder and copy your legal `DUKE3D.GRP` into that folder before running `eduke32-split-screen.exe`.
 
 ## Notes
 
