@@ -1,0 +1,551 @@
+#ifndef GAMESTRUCTURES_H
+#define GAMESTRUCTURES_H
+
+#include "build.h"
+
+void VM_InitHashTables(void);
+
+int32_t __fastcall VM_GetPlayer(int const playerNum, int32_t labelNum, int const lParm2);
+void    __fastcall VM_SetPlayer(int const playerNum, int const labelNum, int const lParm2, int32_t const newValue);
+
+int32_t __fastcall VM_GetSprite(int const spriteNum, int32_t labelNum, int const lParm2);
+void    __fastcall VM_SetSprite(int const spriteNum, int const labelNum, int const lParm2, int32_t const newValue);
+
+int32_t __fastcall VM_GetPlayerInput(int const playerNum, int32_t labelNum);
+void    __fastcall VM_SetPlayerInput(int const playerNum, int const labelNum, int32_t const newValue);
+
+int32_t __fastcall VM_GetWall(int const wallNum, int32_t labelNum);
+void    __fastcall VM_SetWall(int const wallNum, int const labelNum, int32_t const newValue);
+
+int32_t __fastcall VM_GetSector(int const sectNum, int32_t labelNum);
+void    __fastcall VM_SetSector(int const sectNum, int const labelNum, int32_t newValue);
+
+int32_t __fastcall VM_GetProjectile(int const tileNum, int32_t labelNum);
+void    __fastcall VM_SetProjectile(int const tileNum, int const labelNum, int32_t const newValue);
+
+int32_t __fastcall VM_GetActiveProjectile(int const spriteNum, int32_t labelNum);
+void    __fastcall VM_SetActiveProjectile(int const spriteNum, int const labelNum, int32_t const newValue);
+
+int32_t __fastcall VM_GetTileData(int const tileNum, int32_t labelNum);
+void    __fastcall VM_SetTileData(int const tileNum, int const labelNum, int32_t newValue);
+
+int32_t __fastcall VM_GetUserdef(int32_t labelNum, int const lParm2);
+void    __fastcall VM_SetUserdef(int const labelNum, int const lParm2, int32_t const newValue);
+
+typedef struct
+{
+    const char* name;
+    int         lId;
+    int         flags;
+    int         maxParm2;
+    int16_t     offset;
+} memberlabel_t;
+
+extern const memberlabel_t SectorLabels[];
+extern const memberlabel_t WallLabels[];
+extern const memberlabel_t ActorLabels[];
+extern const memberlabel_t PlayerLabels[];
+extern const memberlabel_t ProjectileLabels[];
+extern const memberlabel_t UserdefsLabels[];
+extern const memberlabel_t InputLabels[];
+extern const memberlabel_t TsprLabels[];
+extern const memberlabel_t TileDataLabels[];
+
+extern hashtable_t h_actor;
+extern hashtable_t h_input;
+extern hashtable_t h_paldata;
+extern hashtable_t h_player;
+extern hashtable_t h_projectile;
+extern hashtable_t h_sector;
+extern hashtable_t h_tiledata;
+extern hashtable_t h_tsprite;
+extern hashtable_t h_userdef;
+extern hashtable_t h_wall;
+
+static hashtable_t* const vmStructHashTablePtrs[] = {
+    &h_actor, &h_input, /*&h_paldata,*/ &h_player, &h_projectile, &h_sector, &h_tiledata, &h_tsprite, &h_userdef, &h_wall,
+};
+
+#define LABEL_TYPES (LABEL_CHAR|LABEL_SHORT|LABEL_INT|LABEL_UNSIGNED)
+static inline int __fastcall VM_GetStruct(uint32_t const flags, intptr_t* const addr)
+{
+    switch (flags & LABEL_TYPES)
+    {
+        case LABEL_CHAR:                    return *(int8_t*)addr;
+        case LABEL_CHAR | LABEL_UNSIGNED:   return *(uint8_t*)addr;
+        case LABEL_SHORT:                   return *(int16_t*)addr;
+        case LABEL_SHORT | LABEL_UNSIGNED:  return *(uint16_t*)addr;
+        case LABEL_INT:                     return *(int32_t*)addr;
+        case LABEL_INT | LABEL_UNSIGNED:    return *(uint32_t*)addr;
+        default: EDUKE32_UNREACHABLE_SECTION(break);
+    }
+}
+
+static FORCE_INLINE void __fastcall VM_SetStruct(uint32_t const flags, intptr_t* const addr, int32_t newValue)
+{
+    switch (flags & LABEL_TYPES)
+    {
+        case LABEL_CHAR:                    *(int8_t*)addr = newValue; break;
+        case LABEL_CHAR | LABEL_UNSIGNED:   *(uint8_t*)addr = newValue; break;
+        case LABEL_SHORT:                   *(int16_t*)addr = newValue; break;
+        case LABEL_SHORT | LABEL_UNSIGNED:  *(uint16_t*)addr = newValue; break;
+        case LABEL_INT:                     *(int32_t*)addr = newValue; break;
+        case LABEL_INT | LABEL_UNSIGNED:    *(uint32_t*)addr = newValue; break;
+        default: EDUKE32_UNREACHABLE_SECTION(break);
+    }
+}
+#undef LABEL_TYPES
+
+enum PlayerLabel_t
+{
+    PLAYER_ZOOM,
+    PLAYER_EXITX,
+    PLAYER_EXITY,
+    PLAYER_LOOGIEX,
+    PLAYER_LOOGIEY,
+    PLAYER_NUMLOOGS,
+    PLAYER_LOOGCNT,
+    PLAYER_POSX,
+    PLAYER_POSY,
+    PLAYER_POSZ,
+    PLAYER_HORIZ,
+    PLAYER_OHORIZ,
+    PLAYER_OHORIZOFF,
+    PLAYER_INVDISPTIME,
+    PLAYER_BOBPOSX,
+    PLAYER_BOBPOSY,
+    PLAYER_OPOSX,
+    PLAYER_OPOSY,
+    PLAYER_OPOSZ,
+    PLAYER_PYOFF,
+    PLAYER_OPYOFF,
+    PLAYER_POSXV,
+    PLAYER_POSYV,
+    PLAYER_POSZV,
+    PLAYER_LAST_PISSED_TIME,
+    PLAYER_TRUEFZ,
+    PLAYER_TRUECZ,
+    PLAYER_PLAYER_PAR,
+    PLAYER_VISIBILITY,
+    PLAYER_BOBCOUNTER,
+    PLAYER_WEAPON_SWAY,
+    PLAYER_PALS_TIME,
+    PLAYER_RANDOMFLAMEX,
+    PLAYER_CRACK_TIME,
+    PLAYER_AIM_MODE,
+    PLAYER_ANG,
+    PLAYER_OANG,
+    PLAYER_ANGVEL,
+    PLAYER_CURSECTNUM,
+    PLAYER_LOOK_ANG,
+    PLAYER_LAST_EXTRA,
+    PLAYER_SUBWEAPON,
+    PLAYER_AMMO_AMOUNT,
+    PLAYER_WACKEDBYACTOR,
+    PLAYER_FRAG,
+    PLAYER_FRAGGEDSELF,
+    PLAYER_CURR_WEAPON,
+    PLAYER_LAST_WEAPON,
+    PLAYER_TIPINCS,
+    PLAYER_HORIZOFF,
+    PLAYER_WANTWEAPONFIRE,
+    PLAYER_HOLODUKE_AMOUNT,
+    PLAYER_NEWOWNER,
+    PLAYER_HURT_DELAY,
+    PLAYER_HBOMB_HOLD_DELAY,
+    PLAYER_JUMPING_COUNTER,
+    PLAYER_AIRLEFT,
+    PLAYER_KNEE_INCS,
+    PLAYER_ACCESS_INCS,
+    PLAYER_FTA,
+    PLAYER_FTQ,
+    PLAYER_ACCESS_WALLNUM,
+    PLAYER_ACCESS_SPRITENUM,
+    PLAYER_KICKBACK_PIC,
+    PLAYER_GOT_ACCESS,
+    PLAYER_WEAPON_ANG,
+    PLAYER_FIRSTAID_AMOUNT,
+    PLAYER_SOMETHINGONPLAYER,
+    PLAYER_ON_CRANE,
+    PLAYER_I,
+    PLAYER_ONE_PARALLAX_SECTNUM,
+    PLAYER_OVER_SHOULDER_ON,
+    PLAYER_RANDOM_CLUB_FRAME,
+    PLAYER_FIST_INCS,
+    PLAYER_ONE_EIGHTY_COUNT,
+    PLAYER_CHEAT_PHASE,
+    PLAYER_DUMMYPLAYERSPRITE,
+    PLAYER_EXTRA_EXTRA8,
+    PLAYER_QUICK_KICK,
+    PLAYER_HEAT_AMOUNT,
+    PLAYER_ACTORSQU,
+    PLAYER_TIMEBEFOREEXIT,
+    PLAYER_CUSTOMEXITSOUND,
+    PLAYER_WEAPRECS,
+    PLAYER_WEAPRECCNT,
+    PLAYER_INTERFACE_TOGGLE_FLAG,
+    PLAYER_ROTSCRNANG,
+    PLAYER_OROTSCRNANG,
+    PLAYER_DEAD_FLAG,
+    PLAYER_SHOW_EMPTY_WEAPON,
+    PLAYER_SCUBA_AMOUNT,
+    PLAYER_JETPACK_AMOUNT,
+    PLAYER_STEROIDS_AMOUNT,
+    PLAYER_SHIELD_AMOUNT,
+    PLAYER_HOLODUKE_ON,
+    PLAYER_PYCOUNT,
+    PLAYER_WEAPON_POS,
+    PLAYER_FRAG_PS,
+    PLAYER_TRANSPORTER_HOLD,
+    PLAYER_LAST_FULL_WEAPON,
+    PLAYER_FOOTPRINTSHADE,
+    PLAYER_BOOT_AMOUNT,
+    PLAYER_SCREAM_VOICE,
+    PLAYER_GM,
+    PLAYER_ON_WARPING_SECTOR,
+    PLAYER_FOOTPRINTCOUNT,
+    PLAYER_HBOMB_ON,
+    PLAYER_JUMPING_TOGGLE,
+    PLAYER_RAPID_FIRE_HOLD,
+    PLAYER_ON_GROUND,
+    PLAYER_NAME,
+    PLAYER_INVEN_ICON,
+    PLAYER_BUTTONPALETTE,
+    PLAYER_JETPACK_ON,
+    PLAYER_SPRITEBRIDGE,
+    PLAYER_LASTRANDOMSPOT,
+    PLAYER_SCUBA_ON,
+    PLAYER_FOOTPRINTPAL,
+    PLAYER_HEAT_ON,
+    PLAYER_HOLSTER_WEAPON,
+    PLAYER_FALLING_COUNTER,
+    PLAYER_GOTWEAPON,
+    PLAYER_PALETTE,
+    PLAYER_TOGGLE_KEY_FLAG,
+    PLAYER_KNUCKLE_INCS,
+    PLAYER_WALKING_SND_TOGGLE,
+    PLAYER_PALOOKUP,
+    PLAYER_HARD_LANDING,
+    PLAYER_MAX_SECRET_ROOMS,
+    PLAYER_SECRET_ROOMS,
+    PLAYER_PALS,
+    PLAYER_MAX_ACTORS_KILLED,
+    PLAYER_ACTORS_KILLED,
+    PLAYER_RETURN_TO_CENTER,
+    PLAYER_RUNSPEED,
+    PLAYER_SBS,
+    PLAYER_RELOADING,
+    PLAYER_AUTO_AIM,
+    PLAYER_MOVEMENT_LOCK,
+    PLAYER_SOUND_PITCH,
+    PLAYER_WEAPONSWITCH,
+    PLAYER_TEAM,
+    PLAYER_MAX_PLAYER_HEALTH,
+    PLAYER_MAX_SHIELD_AMOUNT,
+    PLAYER_MAX_AMMO_AMOUNT,
+    PLAYER_LAST_QUICK_KICK,
+    PLAYER_CONNECTED,
+    PLAYER_LOWSPRITE,
+    PLAYER_HIGHSPRITE,
+    PLAYER_END
+};
+
+enum UserdefsLabel_t
+{
+    USERDEFS_GOD,
+    USERDEFS_WARP_ON,
+    USERDEFS_CASHMAN,
+    USERDEFS_EOG,
+    USERDEFS_SHOWALLMAP,
+    USERDEFS_SHOW_HELP,
+    USERDEFS_SCROLLMODE,
+    USERDEFS_CLIPPING,
+    USERDEFS_USER_NAME,
+    USERDEFS_RIDECULE,
+    USERDEFS_SAVEGAME,
+    USERDEFS_PWLOCKOUT,
+    USERDEFS_RTSNAME,
+    USERDEFS_OVERHEAD_ON,
+    USERDEFS_LAST_OVERHEAD,
+    USERDEFS_SHOWWEAPONS,
+    USERDEFS_PAUSE_ON,
+    USERDEFS_FROM_BONUS,
+    USERDEFS_CAMERASPRITE,
+    USERDEFS_LAST_CAMSPRITE,
+    USERDEFS_LAST_LEVEL,
+    USERDEFS_SECRETLEVEL,
+    USERDEFS_CONST_VISIBILITY,
+    USERDEFS_UW_FRAMERATE,
+    USERDEFS_CAMERA_TIME,
+    USERDEFS_FOLFVEL,
+    USERDEFS_FOLAVEL,
+    USERDEFS_FOLX,
+    USERDEFS_FOLY,
+    USERDEFS_FOLA,
+    USERDEFS_RECCNT,
+    USERDEFS_ENTERED_NAME,
+    USERDEFS_SCREEN_TILTING,
+    USERDEFS_SHADOWS,
+    USERDEFS_FTA_ON,
+    USERDEFS_EXECUTIONS,
+    USERDEFS_AUTO_RUN,
+    USERDEFS_COORDS,
+    USERDEFS_TICKRATE,
+    USERDEFS_M_COOP,
+    USERDEFS_COOP,
+    USERDEFS_SCREEN_SIZE,
+    USERDEFS_LOCKOUT,
+    USERDEFS_CROSSHAIR,
+    USERDEFS_PLAYERAI,
+    USERDEFS_RESPAWN_MONSTERS,
+    USERDEFS_RESPAWN_ITEMS,
+    USERDEFS_RESPAWN_INVENTORY,
+    USERDEFS_RECSTAT,
+    USERDEFS_MONSTERS_OFF,
+    USERDEFS_BRIGHTNESS,
+    USERDEFS_M_RESPAWN_ITEMS,
+    USERDEFS_M_RESPAWN_MONSTERS,
+    USERDEFS_M_RESPAWN_INVENTORY,
+    USERDEFS_M_RECSTAT,
+    USERDEFS_M_MONSTERS_OFF,
+    USERDEFS_DETAIL,
+    USERDEFS_M_FFIRE,
+    USERDEFS_FFIRE,
+    USERDEFS_M_PLAYER_SKILL,
+    USERDEFS_M_LEVEL_NUMBER,
+    USERDEFS_M_VOLUME_NUMBER,
+    USERDEFS_MULTIMODE,
+    USERDEFS_PLAYER_SKILL,
+    USERDEFS_LEVEL_NUMBER,
+    USERDEFS_VOLUME_NUMBER,
+    USERDEFS_USER_MAP,
+    USERDEFS_M_USER_MAP,
+    USERDEFS_M_MARKER,
+    USERDEFS_MARKER,
+    USERDEFS_MOUSEFLIP,
+    USERDEFS_STATUSBARSCALE,
+    USERDEFS_DRAWWEAPON,
+    USERDEFS_MOUSEAIMING,
+    USERDEFS_WEAPONSWITCH,
+    USERDEFS_DEMOCAMS,
+    USERDEFS_COLOR,
+    USERDEFS_MSGDISPTIME,
+    USERDEFS_STATUSBARMODE,
+    USERDEFS_M_NOEXITS,
+    USERDEFS_NOEXITS,
+    USERDEFS_AUTOVOTE,
+    USERDEFS_AUTOMSG,
+    USERDEFS_IDPLAYERS,
+    USERDEFS_TEAM,
+    USERDEFS_VIEWBOB,
+    USERDEFS_WEAPONSWAY,
+    USERDEFS_ANGLEINTERPOLATION,
+    USERDEFS_OBITUARIES,
+    USERDEFS_LEVELSTATS,
+    USERDEFS_CROSSHAIRSCALE,
+    USERDEFS_ALTHUD,
+    USERDEFS_DISPLAY_BONUS_SCREEN,
+    USERDEFS_SHOW_LEVEL_TEXT,
+    USERDEFS_WEAPONSCALE,
+    USERDEFS_TEXTSCALE,
+    USERDEFS_RETURN,
+    USERDEFS_VM_PLAYER,
+    USERDEFS_VM_SPRITE,
+    USERDEFS_VM_DISTANCE,
+    USERDEFS_TEAMPAL,
+    USERDEFS_TEAMFRAGS,
+    USERDEFS_TEAMSUICIDES,
+    USERDEFS_DMFLAGS,
+    USERDEFS_M_DMFLAGS,
+    USERDEFS_DRAW_YXASPECT,
+    USERDEFS_MONSTERS_KILLED,
+    USERDEFS_LIMIT_HIT,
+    USERDEFS_WINNER,
+    USERDEFS_END
+};
+
+enum SectorLabel_t
+{
+    SECTOR_WALLPTR,
+    SECTOR_WALLNUM,
+    SECTOR_CEILINGZ,
+    SECTOR_CEILINGZGOAL,
+    SECTOR_CEILINGZVEL,
+    SECTOR_FLOORZ,
+    SECTOR_FLOORZGOAL,
+    SECTOR_FLOORZVEL,
+    SECTOR_CEILINGSTAT,
+    SECTOR_FLOORSTAT,
+    SECTOR_CEILINGPICNUM,
+    SECTOR_CEILINGSLOPE,
+    SECTOR_CEILINGSHADE,
+    SECTOR_CEILINGPAL,
+    SECTOR_CEILINGXPANNING,
+    SECTOR_CEILINGYPANNING,
+    SECTOR_FLOORPICNUM,
+    SECTOR_FLOORSLOPE,
+    SECTOR_FLOORSHADE,
+    SECTOR_FLOORPAL,
+    SECTOR_FLOORXPANNING,
+    SECTOR_FLOORYPANNING,
+    SECTOR_VISIBILITY,
+    SECTOR_ALIGNTO,
+    SECTOR_LOTAG,
+    SECTOR_HITAG,
+    SECTOR_EXTRA,
+    SECTOR_CEILINGBUNCH,
+    SECTOR_FLOORBUNCH,
+    SECTOR_END
+};
+
+enum WallLabel_t
+{
+    WALL_X,
+    WALL_Y,
+    WALL_POINT2,
+    WALL_NEXTWALL,
+    WALL_NEXTSECTOR,
+    WALL_CSTAT,
+    WALL_PICNUM,
+    WALL_OVERPICNUM,
+    WALL_SHADE,
+    WALL_PAL,
+    WALL_XREPEAT,
+    WALL_YREPEAT,
+    WALL_XPANNING,
+    WALL_YPANNING,
+    WALL_LOTAG,
+    WALL_HITAG,
+    WALL_EXTRA,
+    WALL_END
+};
+
+enum ActorLabel_t
+{
+    ACTOR_X,
+    ACTOR_Y,
+    ACTOR_Z,
+    ACTOR_CSTAT,
+    ACTOR_PICNUM,
+    ACTOR_SHADE,
+    ACTOR_PAL,
+    ACTOR_CLIPDIST,
+    ACTOR_BLEND,
+    ACTOR_XREPEAT,
+    ACTOR_YREPEAT,
+    ACTOR_XOFFSET,
+    ACTOR_YOFFSET,
+    ACTOR_SECTNUM,
+    ACTOR_STATNUM,
+    ACTOR_ANG,
+    ACTOR_OWNER,
+    ACTOR_XVEL,
+    ACTOR_YVEL,
+    ACTOR_ZVEL,
+    ACTOR_LOTAG,
+    ACTOR_HITAG,
+    ACTOR_EXTRA,
+    //ACTOR_ULOTAG,
+    //ACTOR_UHITAG,
+
+    ACTOR_STRUCT_BEGIN,
+    ACTOR_HTCGG = ACTOR_STRUCT_BEGIN,
+    ACTOR_HTPICNUM,
+    ACTOR_HTANG,
+    ACTOR_HTEXTRA,
+    ACTOR_HTOWNER,
+    ACTOR_HTMOVFLAG,
+    //ACTOR_HTUMOVFLAG,
+    ACTOR_HTTEMPANG,
+    ACTOR_HTSTAYPUT,
+    //ACTOR_HTFLOORZOFFSET,
+    //ACTOR_HTWATERZOFFSET,
+    ACTOR_HTDISPICNUM,
+    ACTOR_HTTIMETOSLEEP,
+    ACTOR_HTFLOORZ,
+    ACTOR_HTCEILINGZ,
+    ACTOR_HTLASTVX,
+    ACTOR_HTLASTVY,
+    ACTOR_HTBPOSX,
+    ACTOR_HTBPOSY,
+    ACTOR_HTBPOSZ,
+    ACTOR_HTG_T,
+    ACTOR_HTFLAGS,
+
+    ACTOR_SPRITEEXT_BEGIN,
+    ACTOR_ANGOFF = ACTOR_SPRITEEXT_BEGIN,
+    ACTOR_PITCH,
+    ACTOR_ROLL,
+    ACTOR_MDPIVOTXOFF,
+    ACTOR_MDPIVOTYOFF,
+    ACTOR_MDPIVOTZOFF,
+    ACTOR_MDXOFF,
+    ACTOR_MDYOFF,
+    ACTOR_MDZOFF,
+    ACTOR_MDFLAGS,
+    ACTOR_XPANNING,
+    ACTOR_YPANNING,
+    ACTOR_ALPHA,
+    //ACTOR_ISVALID,
+    ACTOR_END
+};
+
+enum InputLabel_t
+{
+    INPUT_AVEL,
+    INPUT_HORZ,
+    INPUT_FVEL,
+    INPUT_SVEL,
+    INPUT_BITS,
+    INPUT_EXTBITS,
+    INPUT_END
+};
+
+enum ProjectileLabel_t
+{
+    PROJ_WORKSLIKE,
+    PROJ_SPAWNS,
+    PROJ_SXREPEAT,
+    PROJ_SYREPEAT,
+    PROJ_SOUND,
+    PROJ_ISOUND,
+    PROJ_VEL,
+    PROJ_EXTRA,
+    PROJ_DECAL,
+    PROJ_TRAIL,
+    PROJ_TXREPEAT,
+    PROJ_TYREPEAT,
+    PROJ_TOFFSET,
+    PROJ_TNUM,
+    PROJ_DROP,
+    PROJ_CSTAT,
+    PROJ_CLIPDIST,
+    PROJ_SHADE,
+    PROJ_XREPEAT,
+    PROJ_YREPEAT,
+    PROJ_PAL,
+    PROJ_EXTRA_RAND,
+    PROJ_HITRADIUS,
+    PROJ_MOVECNT,
+    PROJ_OFFSET,
+    PROJ_BOUNCES,
+    PROJ_BSOUND,
+    PROJ_RANGE, // 28
+    PROJ_FLASH_COLOR,
+    PROJ_END
+};
+
+enum TileDataLabel_t
+{
+    TILEDATA_XSIZE,
+    TILEDATA_YSIZE,
+    TILEDATA_ANIMFRAMES,
+    TILEDATA_XOFFSET,
+    TILEDATA_YOFFSET,
+    TILEDATA_ANIMSPEED,
+    TILEDATA_ANIMTYPE,
+    TILEDATA_GAMEFLAGS,
+    TILEDATA_END
+};
+
+#endif

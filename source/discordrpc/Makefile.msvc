@@ -1,0 +1,51 @@
+OBJ=obj_msvc
+INC=include
+SRC=src
+DISCORDRPC=discordrpc.lib
+
+!ifdef DEBUG
+# debugging options
+flags_cl=/Od /Zi /MD
+flags_link=/DEBUG /LARGEADDRESSAWARE
+flags_lib=
+!else
+# release options
+flags_cl=/Ox /GL /arch:SSE
+flags_link=/RELEASE /LTCG /LARGEADDRESSAWARE
+flags_lib=/LTCG
+!endif
+
+CC=cl
+LINK=link /opt:ref /nologo
+
+DXROOT=U:\SDKs\Microsoft DirectX SDK (April 2007)
+
+CFLAGS=$(CFLAGS) /nologo /MT /J $(flags_cl) $(TARGETOPTS) /I$(INC) /I$(SRC) /I"$(DXROOT)\include"
+!ifdef DEBUG
+CFLAGS=$(CFLAGS) /DDEBUGGINGAIDS
+!endif
+
+CFLAGS=$(CFLAGS) /D "_CRT_SECURE_NO_DEPRECATE" /W2 /DWIN32
+
+OBJECTS=$(OBJ)\discord_rpc.o \
+		$(OBJ)\rpc_connection.o \
+		$(OBJ)\serialization.o \
+		$(OBJ)\connection_win.o \
+		$(OBJ)\discord_register_win.o
+
+{$(SRC)}.cpp{$(OBJ)}.o:
+	$(CC) /c $(CFLAGS) /Fo$@ $<
+
+all: $(OBJ) discordrpc;
+	
+$(OBJ):
+	-mkdir $@
+	
+discordrpc: $(DISCORDRPC)
+$(DISCORDRPC): $(OBJECTS)
+	-mkdir $(OBJ)
+	lib $(flags_lib) /out:$@ /nologo $**
+
+clean:
+	-del /Q $(OBJ)\* $(DISCORDRPC)
+

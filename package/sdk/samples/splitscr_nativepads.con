@@ -1,0 +1,11 @@
+/*
+--------------------------------------------------------------------------------
+Duke Nukem 3D SplitScreen mod
+Native local gamepad MVP
+
+Split-screen rendering and local pad routing now happen in the engine.
+This file stays intentionally minimal so existing launch scripts can keep using
+`-mx package/sdk/samples/splitscr_nativepads.con` without overriding render
+events.
+--------------------------------------------------------------------------------
+*/

@@ -1,0 +1,9 @@
+tilefromtexture 2502 {
+    file "custom/hud/atomic_intro_splitscreen_template.png"
+    alphacut 128
+}
+
+tilefromtexture 2503 {
+    file "custom/hud/atomic_splitscreen_template.png"
+    alphacut 128
+}
