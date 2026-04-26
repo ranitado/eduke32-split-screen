@@ -983,6 +983,107 @@ static void P_AddWeaponAmmoCommon(DukePlayer_t * const pPlayer, int const weapon
         P_AddWeaponMaybeSwitch(pPlayer, weaponNum);
 }
 
+static char const *VM_GetWeaponPickupAmmoName(int const weaponNum)
+{
+    switch (PWEAPON(vm.playerNum, weaponNum, WorksLike))
+    {
+        case PISTOL_WEAPON:     return "Pistol Ammo";
+        case SHOTGUN_WEAPON:    return "Shotgun Shells";
+        case CHAINGUN_WEAPON:   return "Chaingun Ammo";
+        case RPG_WEAPON:        return "RPG Ammo";
+        case HANDBOMB_WEAPON:   return "Pipe Bomb";
+        case SHRINKER_WEAPON:   return "Shrinker Ammo";
+        case DEVISTATOR_WEAPON: return "Devastator Ammo";
+        case TRIPBOMB_WEAPON:   return "Trip Bomb";
+        case FREEZE_WEAPON:     return "Freezer Ammo";
+        case FLAMETHROWER_WEAPON:
+            return "Flamethrower Ammo";
+        default:
+            return nullptr;
+    }
+}
+
+static char const *VM_GetWeaponPickupName(int const weaponNum)
+{
+    switch (PWEAPON(vm.playerNum, weaponNum, WorksLike))
+    {
+        case PISTOL_WEAPON:     return "Pistol";
+        case SHOTGUN_WEAPON:    return "Shotgun";
+        case CHAINGUN_WEAPON:   return "Chaingun";
+        case RPG_WEAPON:        return "RPG";
+        case HANDBOMB_WEAPON:   return "Pipe Bomb";
+        case SHRINKER_WEAPON:   return "Shrinker";
+        case DEVISTATOR_WEAPON: return "Devastator";
+        case TRIPBOMB_WEAPON:   return "Trip Bomb";
+        case FREEZE_WEAPON:     return "Freezethrower";
+        case FLAMETHROWER_WEAPON:
+            return "Incinerator";
+        default:
+            return nullptr;
+    }
+}
+
+static int VM_IsCurrentSpriteWeaponPickup(int const weaponNum)
+{
+    return vm.pSprite != nullptr
+        && (unsigned)weaponNum < MAX_WEAPONS
+        && tileGetMapping(vm.pSprite->picnum) == WeaponPickupSprites[weaponNum];
+}
+
+struct vm_weapon_pickup_context_t
+{
+    int spriteNum;
+    int playerNum;
+    int weaponNum;
+    int gaveNewWeapon;
+};
+
+static vm_weapon_pickup_context_t g_vmWeaponPickupContext = { -1, -1, -1, 0 };
+
+static void VM_ClearWeaponPickupContext(void)
+{
+    g_vmWeaponPickupContext = { -1, -1, -1, 0 };
+}
+
+static void VM_RecordWeaponPickupContext(int const weaponNum, int const gaveNewWeapon)
+{
+    if (!VM_IsCurrentSpriteWeaponPickup(weaponNum))
+    {
+        VM_ClearWeaponPickupContext();
+        return;
+    }
+
+    g_vmWeaponPickupContext = { vm.spriteNum, vm.playerNum, weaponNum, gaveNewWeapon };
+}
+
+static int VM_WeaponPickupContextMatches(int const weaponNum)
+{
+    return g_vmWeaponPickupContext.spriteNum == vm.spriteNum
+        && g_vmWeaponPickupContext.playerNum == vm.playerNum
+        && g_vmWeaponPickupContext.weaponNum == weaponNum;
+}
+
+static void VM_DoWeaponPickupQuote(DukePlayer_t * const pPlayer, char const * const pickupName)
+{
+    if (pickupName == nullptr)
+        return;
+
+    Bstrcpy(apStrings[QUOTE_RESERVED4], pickupName);
+    P_DoQuote(QUOTE_RESERVED4, pPlayer);
+}
+
+static void VM_DoWeaponPickupAmmoQuote(DukePlayer_t * const pPlayer, int const weaponNum, int const oldAmmo)
+{
+    if (pPlayer->ammo_amount[weaponNum] <= oldAmmo || !VM_IsCurrentSpriteWeaponPickup(weaponNum))
+        return;
+
+    if (VM_WeaponPickupContextMatches(weaponNum) && g_vmWeaponPickupContext.gaveNewWeapon)
+        return;
+
+    A_PlaySound(DUKE_GET, pPlayer->i);
+    VM_DoWeaponPickupQuote(pPlayer, VM_GetWeaponPickupAmmoName(weaponNum));
+}
+
 static void VM_AddWeapon(DukePlayer_t * const pPlayer, int const weaponNum, int const nAmount)
 {
     if (EDUKE32_PREDICT_FALSE((unsigned)weaponNum >= MAX_WEAPONS))
@@ -990,6 +1091,10 @@ static void VM_AddWeapon(DukePlayer_t * const pPlayer, int const weaponNum, int 
         CON_ERRPRINTF("invalid weapon %d", weaponNum);
         return;
     }
+
+    int const hadWeapon = (pPlayer->gotweapon & (1 << weaponNum)) != 0;
+    int const oldAmmo = pPlayer->ammo_amount[weaponNum];
+    int const currentSpriteIsWeaponPickup = VM_IsCurrentSpriteWeaponPickup(weaponNum);
 
     if ((pPlayer->gotweapon & (1 << weaponNum)) == 0)
     {
@@ -1001,7 +1106,20 @@ static void VM_AddWeapon(DukePlayer_t * const pPlayer, int const weaponNum, int 
         return;
     }
 
+    if (currentSpriteIsWeaponPickup && nAmount == 0)
+    {
+        VM_RecordWeaponPickupContext(weaponNum, !hadWeapon);
+
+        if (!hadWeapon)
+            VM_DoWeaponPickupQuote(pPlayer, VM_GetWeaponPickupName(weaponNum));
+    }
+    else
+        VM_ClearWeaponPickupContext();
+
     P_AddWeaponAmmoCommon(pPlayer, weaponNum, nAmount);
+
+    if (hadWeapon)
+        VM_DoWeaponPickupAmmoQuote(pPlayer, weaponNum, oldAmmo);
 }
 
 static void VM_AddAmmo(DukePlayer_t * const pPlayer, int const weaponNum, int const nAmount)
@@ -1018,7 +1136,14 @@ static void VM_AddAmmo(DukePlayer_t * const pPlayer, int const weaponNum, int co
         return;
     }
 
+    int const oldAmmo = pPlayer->ammo_amount[weaponNum];
+
     P_AddWeaponAmmoCommon(pPlayer, weaponNum, nAmount);
+
+    VM_DoWeaponPickupAmmoQuote(pPlayer, weaponNum, oldAmmo);
+
+    if (VM_WeaponPickupContextMatches(weaponNum))
+        VM_ClearWeaponPickupContext();
 }
 
 static void VM_AddInventory(DukePlayer_t * const pPlayer, int const itemNum, int const nAmount)

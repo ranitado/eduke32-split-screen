@@ -36,6 +36,9 @@ void CONFIG_SetDefaultKeys(const char (*keyptr)[MAXGAMEFUNCLEN], bool lazy=false
 void CONFIG_SetGameControllerDefaults(void);
 void CONFIG_SetGameControllerDefaultsClear(void);
 void CONFIG_SetSplitScreenGameControllerDefaults(int32_t controllerIndex);
+int32_t CONFIG_NormalizeControllerViewCentering(int32_t viewCentering);
+int32_t CONFIG_AdjustControllerViewCentering(int32_t viewCentering, int32_t direction);
+char const *CONFIG_GetControllerViewCenteringName(int32_t viewCentering);
 
 int32_t CONFIG_GetMapBestTime(char const *mapname, uint8_t const *mapmd4);
 int     CONFIG_SetMapBestTime(uint8_t const *mapmd4, int32_t tm);

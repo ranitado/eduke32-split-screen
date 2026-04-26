@@ -36,6 +36,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "sbar.h"
 #include "screens.h"
 #include "splitscreen.h"
+#include "splitscreen_input.h"
 
 #define COLOR_RED redcol
 #define COLOR_WHITE whitecol
@@ -60,7 +61,7 @@ void G_QuitIfStartupEscapePressed(void)
 
 static void G_DrawStartupVersionText(void)
 {
-    minitext(1, 193, "V0.2", 0, 2 + 8 + 16 + 128);
+    minitext(1, 193, "V0.3", 0, 2 + 8 + 16 + 128);
 }
 
 ////////// OFTEN-USED FEW-LINERS //////////
@@ -2494,6 +2495,17 @@ static void G_DisplayMPResultsScreen(void)
     minitext(45, 96+(8*7), "Deaths", 8, 2+8+16+128);
 }
 
+static void G_ClearResultsInput(void)
+{
+    I_ClearAllInput();
+    G_ClearSplitScreenContinueInput();
+}
+
+static int32_t G_CheckResultsInput(void)
+{
+    return I_CheckAllInput() || G_CheckSplitScreenContinueInput();
+}
+
 static int32_t G_PrintTime_ClockPad(void)
 {
     int32_t clockpad = 2;
@@ -2696,7 +2708,7 @@ void G_BonusScreen(int32_t bonusonly)
             S_PlaySound(BONUSMUSIC);
 
         videoNextPage();
-        I_ClearAllInput();
+        G_ClearResultsInput();
         fadepal(0, 0, 0, 252, 0, -28);
         totalclock = 0;
 
@@ -2712,9 +2724,9 @@ void G_BonusScreen(int32_t bonusonly)
                 videoNextPage();
             }
 
-            if (I_CheckAllInput())
+            if (G_CheckResultsInput())
             {
-                I_ClearAllInput();
+                G_ClearResultsInput();
                 break;
             }
         }
@@ -2744,7 +2756,7 @@ void G_BonusScreen(int32_t bonusonly)
         S_PlaySound(BONUSMUSIC);
 
     videoNextPage();
-    I_ClearAllInput();
+    G_ClearResultsInput();
     fadepal(0, 0, 0, 252, 0, -4);
     bonuscnt = 0;
     totalclock = 0;
@@ -2901,31 +2913,59 @@ void G_BonusScreen(int32_t bonusonly)
                 if (totalclock > (60*6))
                 {
                     int32_t const bonusPlayerCount = G_GetBonusPlayerCount();
-                    int32_t const showSplitPlayerKills = G_HaveSplitScreen() && bonusPlayerCount > 1;
+                    int32_t const showSplitPlayerStats = G_HaveSplitScreen() && bonusPlayerCount > 1;
+                    int32_t const leftLabelX = 10;
+                    int32_t const leftPlayerX = 20;
+                    int32_t const leftValueX = 142;
+                    int32_t const rightLabelX = 170;
+                    int32_t const rightPlayerX = 180;
+                    int32_t const rightValueX = 300;
+                    int32_t enemyY = yy;
+                    int32_t secretY = yy;
 
-                    gametext(10, yy+9, "Enemies Killed:");
-                    yy += 10;
+                    gametext(leftLabelX, enemyY+9, "Enemies Killed:");
+                    enemyY += 10;
 
-                    if (showSplitPlayerKills)
+                    if (showSplitPlayerStats)
                     {
                         for (int32_t playerIndex = 0; playerIndex < bonusPlayerCount; ++playerIndex)
                         {
                             Bsprintf(tempbuf, "P%d:", G_GetBonusPlayer(playerIndex) + 1);
-                            gametext(20, yy+9, tempbuf);
-                            yy += 10;
+                            gametext(leftPlayerX, enemyY+9, tempbuf);
+                            enemyY += 10;
                         }
                     }
 
-                    gametext(10, yy+9, "Enemies Left:");
-                    yy += 10;
+                    gametext(leftLabelX, enemyY+9, "Enemies Left:");
+                    enemyY += 10;
+
+                    if (totalclock > (60*9))
+                    {
+                        gametext(rightLabelX, secretY+9, "Secrets Found:");
+                        secretY += 10;
+
+                        if (showSplitPlayerStats)
+                        {
+                            for (int32_t playerIndex = 0; playerIndex < bonusPlayerCount; ++playerIndex)
+                            {
+                                Bsprintf(tempbuf, "P%d:", G_GetBonusPlayer(playerIndex) + 1);
+                                gametext(rightPlayerX, secretY+9, tempbuf);
+                                secretY += 10;
+                            }
+                        }
+
+                        gametext(rightLabelX, secretY+9, "Secrets Missed:");
+                        secretY += 10;
+
+                        if (bonuscnt == 4)
+                            bonuscnt++;
+                    }
 
                     if (bonuscnt == 2)
                     {
                         bonuscnt++;
                         S_PlaySound(FLY_BY);
                     }
-
-                    yy = zz;
 
                     if (totalclock > (60*7))
                     {
@@ -2935,30 +2975,32 @@ void G_BonusScreen(int32_t bonusonly)
                             S_PlaySound(PIPEBOMB_EXPLODE);
                         }
 
-                        if (showSplitPlayerKills)
+                        enemyY = zz;
+
+                        if (showSplitPlayerStats)
                         {
-                            yy += 10;
+                            enemyY += 10;
 
                             for (int32_t playerIndex = 0; playerIndex < bonusPlayerCount; ++playerIndex)
                             {
                                 DukePlayer_t const * const pPlayer = g_player[G_GetBonusPlayer(playerIndex)].ps;
 
                                 Bsprintf(tempbuf, "%-3d", pPlayer != nullptr ? pPlayer->actors_killed : 0);
-                                gametext_number((320>>2)+70, yy+9, tempbuf);
-                                yy += 10;
+                                gametext_number(leftValueX, enemyY+9, tempbuf);
+                                enemyY += 10;
                             }
                         }
                         else
                         {
                             Bsprintf(tempbuf, "%-3d", g_player[myconnectindex].ps->actors_killed);
-                            gametext_number((320>>2)+70, yy+9, tempbuf);
-                            yy += 10;
+                            gametext_number(leftValueX, enemyY+9, tempbuf);
+                            enemyY += 10;
                         }
 
                         if (ud.player_skill > 3)
                         {
-                            gametext((320>>2)+70, yy+9, "N/A");
-                            yy += 10;
+                            gametext(leftValueX, enemyY+9, "N/A");
+                            enemyY += 10;
                         }
                         else
                         {
@@ -2967,22 +3009,11 @@ void G_BonusScreen(int32_t bonusonly)
                             if (actorsLeft < 0)
                                 Bsprintf(tempbuf, "%-3d", 0);
                             else Bsprintf(tempbuf, "%-3d", actorsLeft);
-                            gametext_number((320>>2)+70, yy+9, tempbuf);
-                            yy += 10;
+                            gametext_number(leftValueX, enemyY+9, tempbuf);
+                            enemyY += 10;
                         }
                     }
-                }
 
-                zz = yy += 5;
-                if (totalclock > (60*9))
-                {
-                    gametext(10, yy+9, "Secrets Found:");
-                    yy += 10;
-                    gametext(10, yy+9, "Secrets Missed:");
-                    yy += 10;
-                    if (bonuscnt == 4) bonuscnt++;
-
-                    yy = zz;
                     if (totalclock > (60*10))
                     {
                         if (bonuscnt == 5)
@@ -2990,26 +3021,47 @@ void G_BonusScreen(int32_t bonusonly)
                             bonuscnt++;
                             S_PlaySound(PIPEBOMB_EXPLODE);
                         }
-                        Bsprintf(tempbuf, "%-3d", G_GetBonusSecretRooms());
-                        gametext_number((320>>2)+70, yy+9, tempbuf);
-                        yy += 10;
+
+                        secretY = zz;
+
+                        if (showSplitPlayerStats)
+                        {
+                            secretY += 10;
+
+                            for (int32_t playerIndex = 0; playerIndex < bonusPlayerCount; ++playerIndex)
+                            {
+                                DukePlayer_t const * const pPlayer = g_player[G_GetBonusPlayer(playerIndex)].ps;
+
+                                Bsprintf(tempbuf, "%-3d", pPlayer != nullptr ? pPlayer->secret_rooms : 0);
+                                gametext_number(rightValueX, secretY+9, tempbuf);
+                                secretY += 10;
+                            }
+                        }
+                        else
+                        {
+                            Bsprintf(tempbuf, "%-3d", G_GetBonusSecretRooms());
+                            gametext_number(rightValueX, secretY+9, tempbuf);
+                            secretY += 10;
+                        }
 #if 0
                         // Always overwritten.
                         if (g_player[myconnectindex].ps->secret_rooms > 0)
                             Bsprintf(tempbuf, "%-3d%%", (100*g_player[myconnectindex].ps->secret_rooms/g_player[myconnectindex].ps->max_secret_rooms));
 #endif
                         Bsprintf(tempbuf, "%-3d", max<int32_t>(G_GetBonusMaxSecretRooms() - G_GetBonusSecretRooms(), 0));
-                        gametext_number((320>>2)+70, yy+9, tempbuf);
-                        yy += 10;
-                        }
+                        gametext_number(rightValueX, secretY+9, tempbuf);
+                        secretY += 10;
                     }
+
+                    yy = max<int32_t>(enemyY, secretY);
+                }
 
                 if (totalclock > 10240 && totalclock < 10240+10240)
                     totalclock = 1024;
 
-                if (I_CheckAllInput() && totalclock >(60*2)) // JBF 20030809
+                if (G_CheckResultsInput() && totalclock >(60*2)) // JBF 20030809
                 {
-                    I_ClearAllInput();
+                    G_ClearResultsInput();
                     if (totalclock < (60*13))
                     {
                         KB_FlushKeyboardQueue();

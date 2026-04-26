@@ -101,6 +101,7 @@ static int8_t g_splitScreenWeaponPulseDir[MAXPLAYERS];
 static uint8_t g_splitScreenWeaponPulseFrames[MAXPLAYERS];
 static uint8_t g_splitScreenPausePulseFrames[MAXPLAYERS];
 static split_config_menu_state_t g_splitScreenConfigMenu[MAXPLAYERS];
+static uint32_t g_splitScreenContinuePrevButtons[MAX_LOCAL_PLAYERS];
 
 static char const * const s_splitMenuAutoAimNames[] = { "Never", "Always", "Hitscan only" };
 static int32_t const s_splitMenuAutoAimValues[] = { 0, 1, 2 };
@@ -139,6 +140,46 @@ static bool G_GamepadButtonPressed(uint32_t const buttons, uint32_t const previo
 {
     uint32_t const mask = (1u << button);
     return (buttons & mask) != 0 && (previousButtons & mask) == 0;
+}
+
+static int G_GetSplitScreenContinueViewCount(void)
+{
+    return G_HasNativeSplitScreenGamepads() ? min<int32_t>(G_GetSplitScreenPlayerCount(), MAX_LOCAL_PLAYERS) : 0;
+}
+
+static void G_ClearSplitScreenContinueInputLocal(void)
+{
+    int const viewCount = G_GetSplitScreenContinueViewCount();
+    int const firstGamepadViewIndex = G_GetFirstGamepadViewIndex();
+
+    for (int viewIndex = 0; viewIndex < MAX_LOCAL_PLAYERS; ++viewIndex)
+    {
+        if (viewIndex >= firstGamepadViewIndex && viewIndex < viewCount)
+        {
+            gamepadstate_t state {};
+            g_splitScreenContinuePrevButtons[viewIndex] = joyGetGamepadState(G_GetGamepadIndexForView(viewIndex), &state) == 0 ? state.buttons : 0;
+        }
+        else
+            g_splitScreenContinuePrevButtons[viewIndex] = 0;
+    }
+}
+
+static int32_t G_CheckSplitScreenContinueInputLocal(void)
+{
+    int const viewCount = G_GetSplitScreenContinueViewCount();
+    int const firstGamepadViewIndex = G_GetFirstGamepadViewIndex();
+    int32_t pressed = 0;
+
+    for (int viewIndex = firstGamepadViewIndex; viewIndex < viewCount; ++viewIndex)
+    {
+        gamepadstate_t state {};
+        uint32_t const buttons = joyGetGamepadState(G_GetGamepadIndexForView(viewIndex), &state) == 0 ? state.buttons : 0;
+
+        pressed |= (buttons & ~g_splitScreenContinuePrevButtons[viewIndex]) != 0;
+        g_splitScreenContinuePrevButtons[viewIndex] = buttons;
+    }
+
+    return pressed;
 }
 
 static int G_GetControllerProfileForView(int const viewIndex)
@@ -198,7 +239,8 @@ static int32_t G_GetConfiguredAimWeight(int const controllerProfile)
 
 static int32_t G_GetConfiguredViewCentering(int const controllerProfile)
 {
-    return controllerProfile == 0 ? ud.config.JoystickViewCentering : ud.config.SplitScreenJoystickViewCentering[controllerProfile - 1];
+    int32_t const viewCentering = controllerProfile == 0 ? ud.config.JoystickViewCentering : ud.config.SplitScreenJoystickViewCentering[controllerProfile - 1];
+    return CONFIG_NormalizeControllerViewCentering(viewCentering);
 }
 
 static int32_t G_GetConfiguredAimAssist(int const controllerProfile)
@@ -598,7 +640,7 @@ static void G_ModifySplitScreenConfigMenuEntry(int const playerNum, int const co
             else if (menu.current == 3)
             {
                 int32_t * const viewCentering = G_GetMutableConfiguredViewCentering(controllerProfile);
-                *viewCentering = clamp<int32_t>(*viewCentering + direction, 0, 8);
+                *viewCentering = CONFIG_AdjustControllerViewCentering(*viewCentering, direction);
             }
             else
                 saveConfig = false;
@@ -766,7 +808,7 @@ static void G_FormatSplitScreenConfigMenuLine(int const playerNum, int const con
                 Bsnprintf(buffer, bufferSize, "Inverted aiming: %s", s_splitMenuNoYesNames[invert[axis] != 0]);
             }
             else if (menu.current == 3)
-                Bsnprintf(buffer, bufferSize, "View centering: %d", G_GetConfiguredViewCentering(controllerProfile));
+                Bsnprintf(buffer, bufferSize, "View centering: %s", CONFIG_GetControllerViewCenteringName(G_GetConfiguredViewCentering(controllerProfile)));
             else if (menu.current == 4)
                 Bsnprintf(buffer, bufferSize, "Reset to defaults");
             break;
@@ -1188,6 +1230,16 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
 
     G_UpdatePreviousGamepadState(playerNum, state);
 }
+}
+
+void G_ClearSplitScreenContinueInput(void)
+{
+    G_ClearSplitScreenContinueInputLocal();
+}
+
+int32_t G_CheckSplitScreenContinueInput(void)
+{
+    return G_CheckSplitScreenContinueInputLocal();
 }
 
 void G_DrawSplitScreenConfigMenus(void)

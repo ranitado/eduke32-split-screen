@@ -842,7 +842,24 @@ static void LoadSDLControllerDB()
     if (gameControllerDBLoaded)
         return;
 
-    buildvfs_kfd fh = kopen4load("gamecontrollerdb.txt", 0);
+    char const * const dbPaths[] = {
+        "gamecontrollerdb.txt",
+        "package/common/gamecontrollerdb.txt",
+    };
+
+    buildvfs_kfd fh = buildvfs_kfd_invalid;
+    char const * loadedPath = nullptr;
+
+    for (char const * const dbPath : dbPaths)
+    {
+        fh = kopen4load(dbPath, 0);
+        if (fh != buildvfs_kfd_invalid)
+        {
+            loadedPath = dbPath;
+            break;
+        }
+    }
+
     if (fh == buildvfs_kfd_invalid)
         return;
 
@@ -884,7 +901,7 @@ error:
     if (i == -1)
         goto error;
     else
-        VLOG_F(LOG_INPUT, "Loaded game controller database.");
+        VLOG_F(LOG_INPUT, "Loaded game controller database: %s.", loadedPath);
 
     Xaligned_free(dbuf);
 
@@ -924,6 +941,11 @@ void joyScanDevices()
     }
 
     numjoysticks = SDL_NumJoysticks();
+
+#if SDL_MAJOR_VERSION >= 2
+    if (gameControllerDBLoaded == false)
+        LoadSDLControllerDB();
+#endif
 
     if (numjoysticks < 1)
         VLOG_F(LOG_INPUT, "No game controllers found.");
@@ -1004,9 +1026,6 @@ void joyScanDevices()
                 }
 #endif
                 joystick.isGameController = 1;
-
-                if (gameControllerDBLoaded == false)
-                    LoadSDLControllerDB();
 
                 Xfree(joystick.pAxis);
                 joystick.pAxis = (int32_t *)Xcalloc(joystick.numAxes, sizeof(int32_t));

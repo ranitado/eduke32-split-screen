@@ -1602,7 +1602,7 @@ int32_t registerosdcommands(void)
 
         { "crosshair", "display crosshair" CVAR_BOOL_OPTSTR, (void *)&ud.crosshair, CVAR_BOOL, 0, 1 },
 
-        { "cl_autoaim", "weapon autoaim:\n 0: none\n 1: hitscan only\n 2: projectiles only\n 3: everything", (void *)&ud.config.AutoAim, CVAR_INT|CVAR_MULTI, 0, 3 },
+        { "cl_autoaim", "weapon autoaim:\n 0: none\n 1: always\n 2: hitscan only", (void *)&ud.config.AutoAim, CVAR_INT|CVAR_MULTI, 0, 2 },
         { "cl_autorun", "player autorun" CVAR_BOOL_OPTSTR, (void *)&ud.auto_run, CVAR_BOOL, 0, 1 },
 
         { "cl_autosave", "save game at checkpoints" CVAR_BOOL_OPTSTR, (void *) &ud.autosave, CVAR_BOOL, 0, 1 },

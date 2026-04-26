@@ -66,6 +66,11 @@ static void G_RebuildLocalConnectionChain(int32_t const playerCount)
     for (int i = 0; i < playerCount - 1; ++i)
         connectpoint2[i] = i + 1;
 }
+
+static void G_SyncSinglePlayerSettingsFromPrimaryPlayer(void)
+{
+    ud.auto_run = ud.config.SplitScreenPlayerAlwaysRun[0] != 0;
+}
 }
 
 static int32_t G_GetLegacySplitScreenPlayerCount(void)
@@ -113,6 +118,9 @@ void G_SetActiveSplitScreenPlayerCount(int32_t const playerCount)
     G_EnsureSplitScreenPlayerCountsInitialized();
 
     g_splitScreenActivePlayerCount = clamp(playerCount, 1, G_GetConfiguredSplitScreenPlayerCount());
+
+    if (g_splitScreenActivePlayerCount == 1)
+        G_SyncSinglePlayerSettingsFromPrimaryPlayer();
 
 #ifdef SPLITSCREEN_MOD_HACKS
     g_fakeMultiMode = (g_splitScreenActivePlayerCount > 1) ? g_splitScreenActivePlayerCount : 0;

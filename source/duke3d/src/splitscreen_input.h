@@ -29,6 +29,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 extern void G_UpdateSplitScreenLocalInputs(void);
 extern void G_FillSplitScreenInputsForTic(void);
 extern void G_DrawSplitScreenConfigMenus(void);
+extern void G_ClearSplitScreenContinueInput(void);
+extern int32_t G_CheckSplitScreenContinueInput(void);
 extern int32_t G_CopySplitScreenLocalInput(int32_t playerNum, input_t *input);
 
 #endif

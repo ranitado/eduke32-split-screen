@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "duke3d.h"
 #include "enet.h"
 #include "input.h"
+#include "config.h"
 #include "savegame.h"
 #include "splitscreen.h"
 
@@ -97,7 +98,8 @@ static int32_t G_GetJoystickAimWeightForPlayer(int32_t const playerNum)
 static int32_t G_GetJoystickViewCenteringForPlayer(int32_t const playerNum)
 {
     int const profile = G_GetSplitScreenControllerProfileForPlayer(playerNum);
-    return profile == 0 ? ud.config.JoystickViewCentering : ud.config.SplitScreenJoystickViewCentering[profile - 1];
+    int32_t const viewCentering = profile == 0 ? ud.config.JoystickViewCentering : ud.config.SplitScreenJoystickViewCentering[profile - 1];
+    return CONFIG_NormalizeControllerViewCentering(viewCentering);
 }
 
 static int32_t G_GetJoystickAimAssistForPlayer(int32_t const playerNum)
@@ -169,6 +171,15 @@ static int32_t G_GetSplitScreenWeaponYOffsetPixels(int32_t const playerNum)
         return -7;
 
     return viewport.height < ydim ? -22 : 0;
+}
+
+static int32_t G_GetSplitScreenSmallViewportRpgXOffsetPixels(int32_t const playerNum)
+{
+    splitscreen_viewport_t viewport {};
+    if (G_GetSplitScreenViewportForPlayer(playerNum, &viewport) != 0)
+        return 0;
+
+    return (viewport.width < xdim && viewport.height < ydim) ? 8 : 0;
 }
 
 static int32_t G_GetSplitScreenScopedHudUniqueId(int32_t const uniqueID)
@@ -520,7 +531,7 @@ static int GetAutoAimAng(int spriteNum, int playerNum, int projecTile, int zAdju
 
     Bassert((unsigned)playerNum < MAXPLAYERS);
 
-    Gv_SetVar(g_aimAngleVarID, g_player[playerNum].ps->auto_aim == 3 ? AUTO_AIM_ANGLE<<1 : AUTO_AIM_ANGLE, spriteNum, playerNum);
+    Gv_SetVar(g_aimAngleVarID, AUTO_AIM_ANGLE, spriteNum, playerNum);
 
     VM_OnEvent(EVENT_GETAUTOAIMANGLE, spriteNum, playerNum);
 
@@ -2552,6 +2563,7 @@ void P_DisplayWeapon(void)
 
                 if (G_HaveSplitScreen())
                 {
+                    weaponX += G_GetSplitScreenSmallViewportRpgXOffsetPixels(screenpeek);
                     weaponYOffset -= 6;
                 }
                 else

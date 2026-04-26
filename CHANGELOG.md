@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3
+
+- Fixed auto aim not working and configuration save issues.
+- Improved split-screen results screen with per-player kills/secrets.
+- Fixed weapon pickup notifications and pickup sounds.
+- Improved controller compatibility and first-run display handling.
+
 ## v0.2
 
 - Improved gamepad controls, added LT precision aiming, auto-run disable option, default stick feel, and disabled view centering by default.

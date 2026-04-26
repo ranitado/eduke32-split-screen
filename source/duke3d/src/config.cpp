@@ -47,10 +47,109 @@ hashtable_t h_gamefuncs    = { NUMGAMEFUNCTIONS<<1, NULL };
 static float constexpr CONFIG_CONTROLLER_AIM_SENS_X = 4.5f;
 static float constexpr CONFIG_CONTROLLER_AIM_SENS_Y = 4.5f;
 static int32_t constexpr CONFIG_CONTROLLER_VIEW_CENTERING_DEFAULT = 0;
+static int32_t constexpr CONFIG_CONTROLLER_VIEW_CENTERING_SLOW = 1;
+static int32_t constexpr CONFIG_CONTROLLER_VIEW_CENTERING_MED = 5;
+static int32_t constexpr CONFIG_CONTROLLER_VIEW_CENTERING_FAST = 8;
 static int32_t constexpr CONFIG_CONTROLLER_VIEW_CENTERING_LEGACY_DEFAULT = 4;
 static int32_t g_controllerViewCenteringDefaultMigrated = 0;
 
 static void CONFIG_MigrateModernControllerDefaults(void);
+
+static bool CONFIG_GetDesktopVideoMode(int32_t const displayIndex, int32_t * const width, int32_t * const height)
+{
+#if !defined __ANDROID__ && defined RENDERTYPESDL && SDL_MAJOR_VERSION >= 2
+    uint32_t const inited = SDL_WasInit(SDL_INIT_VIDEO);
+    if (inited == 0)
+        SDL_Init(SDL_INIT_VIDEO);
+    else if (!(inited & SDL_INIT_VIDEO))
+        SDL_InitSubSystem(SDL_INIT_VIDEO);
+
+    int32_t const displayCount = SDL_GetNumVideoDisplays();
+    int32_t const resolvedDisplay = displayCount > 0 ? clamp<int32_t>(displayIndex, 0, displayCount - 1) : 0;
+
+    SDL_DisplayMode dm;
+    if (SDL_GetDesktopDisplayMode(resolvedDisplay, &dm) == 0 && dm.w >= 320 && dm.h >= 200)
+    {
+        *width = dm.w;
+        *height = dm.h;
+        return true;
+    }
+#else
+    UNREFERENCED_PARAMETER(displayIndex);
+    UNREFERENCED_PARAMETER(width);
+    UNREFERENCED_PARAMETER(height);
+#endif
+
+    return false;
+}
+
+static void CONFIG_SanitizeVideoSetup(void)
+{
+#if !defined __ANDROID__
+    ud.setup.fullscreen = ud.setup.fullscreen != 0;
+
+    int32_t desktopWidth = 0;
+    int32_t desktopHeight = 0;
+    bool const haveDesktopMode = CONFIG_GetDesktopVideoMode(r_displayindex, &desktopWidth, &desktopHeight);
+    bool const invalidResolution = ud.setup.xdim < 320 || ud.setup.ydim < 200 || ud.setup.xdim > MAXXDIM || ud.setup.ydim > MAXYDIM ||
+                                   (ud.setup.xdim * 10) < (ud.setup.ydim * 12);
+
+    if (haveDesktopMode && (invalidResolution || (ud.setup.fullscreen && (ud.setup.xdim > desktopWidth || ud.setup.ydim > desktopHeight))))
+    {
+        ud.setup.xdim = desktopWidth;
+        ud.setup.ydim = desktopHeight;
+        ud.setup.fullscreen = 1;
+    }
+    else if (!haveDesktopMode && invalidResolution)
+    {
+        ud.setup.xdim = 1024;
+        ud.setup.ydim = 768;
+        ud.setup.fullscreen = 1;
+    }
+#endif
+}
+
+int32_t CONFIG_NormalizeControllerViewCentering(int32_t const viewCentering)
+{
+    if (viewCentering <= 0)
+        return CONFIG_CONTROLLER_VIEW_CENTERING_DEFAULT;
+    if (viewCentering <= 2)
+        return CONFIG_CONTROLLER_VIEW_CENTERING_SLOW;
+    if (viewCentering <= 6)
+        return CONFIG_CONTROLLER_VIEW_CENTERING_MED;
+
+    return CONFIG_CONTROLLER_VIEW_CENTERING_FAST;
+}
+
+static int32_t CONFIG_GetControllerViewCenteringOptionIndex(int32_t const viewCentering)
+{
+    switch (CONFIG_NormalizeControllerViewCentering(viewCentering))
+    {
+        case CONFIG_CONTROLLER_VIEW_CENTERING_SLOW: return 1;
+        case CONFIG_CONTROLLER_VIEW_CENTERING_MED:  return 2;
+        case CONFIG_CONTROLLER_VIEW_CENTERING_FAST: return 3;
+        default:                                    return 0;
+    }
+}
+
+int32_t CONFIG_AdjustControllerViewCentering(int32_t const viewCentering, int32_t const direction)
+{
+    static int32_t constexpr values[] = {
+        CONFIG_CONTROLLER_VIEW_CENTERING_DEFAULT,
+        CONFIG_CONTROLLER_VIEW_CENTERING_SLOW,
+        CONFIG_CONTROLLER_VIEW_CENTERING_MED,
+        CONFIG_CONTROLLER_VIEW_CENTERING_FAST,
+    };
+
+    int32_t const option = clamp<int32_t>(CONFIG_GetControllerViewCenteringOptionIndex(viewCentering) + direction, 0, ARRAY_SIZE(values) - 1);
+    return values[option];
+}
+
+char const *CONFIG_GetControllerViewCenteringName(int32_t const viewCentering)
+{
+    static char const * const names[] = { "Off", "Slow", "Med", "Fast" };
+    return names[CONFIG_GetControllerViewCenteringOptionIndex(viewCentering)];
+}
 
 static bool CONFIG_IsBlankPlayerName(char const * const name)
 {
@@ -224,21 +323,14 @@ void CONFIG_SetDefaults(void)
     ud.setup.xdim = droidinfo.screen_width;
     ud.setup.ydim = droidinfo.screen_height;
 #else
-# if defined RENDERTYPESDL && SDL_MAJOR_VERSION >= 2
-    uint32_t inited = SDL_WasInit(SDL_INIT_VIDEO);
-    if (inited == 0)
-        SDL_Init(SDL_INIT_VIDEO);
-    else if (!(inited & SDL_INIT_VIDEO))
-        SDL_InitSubSystem(SDL_INIT_VIDEO);
-
-    SDL_DisplayMode dm;
-    if (SDL_GetDesktopDisplayMode(0, &dm) == 0)
+    int32_t desktopWidth = 0;
+    int32_t desktopHeight = 0;
+    if (CONFIG_GetDesktopVideoMode(0, &desktopWidth, &desktopHeight))
     {
-        ud.setup.xdim = dm.w;
-        ud.setup.ydim = dm.h;
+        ud.setup.xdim = desktopWidth;
+        ud.setup.ydim = desktopHeight;
     }
     else
-# endif
     {
         ud.setup.xdim = 1024;
         ud.setup.ydim = 768;
@@ -958,6 +1050,14 @@ static void CONFIG_MigrateViewCenteringDefaultsOnce(void)
     g_controllerViewCenteringDefaultMigrated = 1;
 }
 
+static void CONFIG_NormalizeControllerViewCenteringSettings(void)
+{
+    ud.config.JoystickViewCentering = CONFIG_NormalizeControllerViewCentering(ud.config.JoystickViewCentering);
+
+    for (int profile = 0; profile < MAXSPLITSCREENCONTROLLERPROFILES; ++profile)
+        ud.config.SplitScreenJoystickViewCentering[profile] = CONFIG_NormalizeControllerViewCentering(ud.config.SplitScreenJoystickViewCentering[profile]);
+}
+
 static bool CONFIG_PrimaryControllerUsesPreAutoRunTriggerDefaults(void)
 {
     return ud.config.JoystickFunctions[CONTROLLER_BUTTON_A][0] == gamefunc_Jump
@@ -1045,6 +1145,7 @@ static void CONFIG_MigrateModernControllerDefaults(void)
     }
 
     CONFIG_MigrateViewCenteringDefaultsOnce();
+    CONFIG_NormalizeControllerViewCenteringSettings();
 }
 
 void CONFIG_SetGameControllerDefaultsClear()
@@ -1171,6 +1272,8 @@ int CONFIG_ReadSetup(void)
 
     if (ud.setup.bpp < 8) ud.setup.bpp = 32;
 
+    CONFIG_SanitizeVideoSetup();
+
 #ifdef POLYMER
     int32_t rendmode = 0;
     SCRIPT_GetNumber(ud.config.scripthandle, "Screen Setup", "Polymer", &rendmode);
@@ -1235,6 +1338,8 @@ int CONFIG_ReadSetup(void)
         ud.config.SplitScreenPlayerColor[i] = clamp(ud.config.SplitScreenPlayerColor[i], 0, MAXPALOOKUPS - 1);
         ud.config.SplitScreenPlayerTeam[i] = clamp(ud.config.SplitScreenPlayerTeam[i], 0, 3);
     }
+
+    ud.config.AutoAim = ud.config.SplitScreenPlayerAutoAim[0];
 
     if (!CommandName)
     {
@@ -1343,6 +1448,8 @@ void CONFIG_WriteSettings(void) // save binds and aliases to <cfgname>_settings.
 void CONFIG_WriteSetup(uint32_t flags)
 {
     if (!ud.config.setupread) return;
+
+    CONFIG_NormalizeControllerViewCenteringSettings();
 
     if (ud.config.scripthandle < 0)
         ud.config.scripthandle = SCRIPT_Init(g_setupFileName);
@@ -1507,6 +1614,9 @@ void CONFIG_WriteSetup(uint32_t flags)
     SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "ViewCenteringDefaultMigrated", g_controllerViewCenteringDefaultMigrated, FALSE, FALSE);
     if (!CommandName && !CONFIG_IsBlankPlayerName(szPlayerName))
         Bstrncpyz(ud.config.SplitScreenPlayerName[0], szPlayerName, sizeof(ud.config.SplitScreenPlayerName[0]));
+
+    ud.config.AutoAim = clamp(ud.config.AutoAim, 0, 2);
+    ud.config.SplitScreenPlayerAutoAim[0] = ud.config.AutoAim;
 
     for (int i = 0; i < MAXSPLITSCREENCONTROLLERS; ++i)
     {

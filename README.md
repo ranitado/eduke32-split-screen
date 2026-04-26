@@ -28,7 +28,7 @@ This repository and its releases do **not** include `DUKE3D.GRP` or any commerci
 
 ## Installing the Windows Release
 
-1. Download `eduke32-split-screen-v0.2-windows-x64.zip` from the GitHub release.
+1. Download `eduke32-split-screen-v0.3-windows-x64.zip` from the GitHub release.
 2. Extract it to a new folder.
 3. Copy your legal `DUKE3D.GRP` into that same folder.
 4. Run `eduke32-split-screen.exe`.

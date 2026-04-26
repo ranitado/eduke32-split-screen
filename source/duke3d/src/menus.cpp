@@ -31,6 +31,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "duke3d.h"
 #include "in_android.h"
 #include "input.h"
+#include "config.h"
 #include "osdcmds.h"
 #include "savegame.h"
 #include "screens.h"
@@ -483,16 +484,8 @@ static MenuOption_t MEO_GAMESETUP_STARTWIN = MAKE_MENUOPTION( &MF_Redfont, &MEOS
 static MenuEntry_t ME_GAMESETUP_STARTWIN = MAKE_MENUENTRY( "Startup window:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_GAMESETUP_STARTWIN, Option );
 #endif
 
-static char const *MEOSN_GAMESETUP_AIM_AUTO[] = { "Never", "Always", "Hitscan only",
-#ifdef EDUKE32_ANDROID_MENU
-"Extra wide"
-#endif
-};
-static int32_t MEOSV_GAMESETUP_AIM_AUTO[] = { 0, 1, 2,
-#ifdef EDUKE32_ANDROID_MENU
-3,
-#endif
-};
+static char const *MEOSN_GAMESETUP_AIM_AUTO[] = { "Never", "Always", "Hitscan only" };
+static int32_t MEOSV_GAMESETUP_AIM_AUTO[] = { 0, 1, 2 };
 
 static MenuOptionSet_t MEOS_GAMESETUP_AIM_AUTO = MAKE_MENUOPTIONSET( MEOSN_GAMESETUP_AIM_AUTO, MEOSV_GAMESETUP_AIM_AUTO, 0x2 );
 static MenuOption_t MEO_GAMESETUP_AIM_AUTO = MAKE_MENUOPTION( &MF_Redfont, &MEOS_GAMESETUP_AIM_AUTO, &ud.config.AutoAim );
@@ -1072,8 +1065,11 @@ MAKE_MENU_TOP_ENTRYLINK( "Edit Analog Inputs", MEF_BigOptionsRtSections, JOYSTIC
 static MenuRangeInt32_t MEO_JOYSTICK_WEIGHTED_AIMING = MAKE_MENURANGE(&ud.config.JoystickAimWeight , &MF_Bluefont, 0, 8, 0, 9, 0 );
 static MenuEntry_t ME_JOYSTICK_WEIGHTED_AIMING = MAKE_MENUENTRY( "Weighted aiming:", &MF_Redfont, &MEF_BigSliders, &MEO_JOYSTICK_WEIGHTED_AIMING, RangeInt32 );
 
-static MenuRangeInt32_t MEO_JOYSTICK_VIEW_CENTERING = MAKE_MENURANGE(&ud.config.JoystickViewCentering , &MF_Bluefont, 0, 8, 0, 5, 0 );
-static MenuEntry_t ME_JOYSTICK_VIEW_CENTERING = MAKE_MENUENTRY( "View centering:", &MF_Redfont, &MEF_BigSliders, &MEO_JOYSTICK_VIEW_CENTERING, RangeInt32 );
+static char const *MEOSN_JOYSTICK_VIEW_CENTERING[] = { "Off", "Slow", "Med", "Fast", };
+static int32_t MEOSV_JOYSTICK_VIEW_CENTERING[] = { 0, 1, 5, 8, };
+static MenuOptionSet_t MEOS_JOYSTICK_VIEW_CENTERING = MAKE_MENUOPTIONSET( MEOSN_JOYSTICK_VIEW_CENTERING, MEOSV_JOYSTICK_VIEW_CENTERING, 0x2 );
+static MenuOption_t MEO_JOYSTICK_VIEW_CENTERING = MAKE_MENUOPTION( &MF_Redfont, &MEOS_JOYSTICK_VIEW_CENTERING, &ud.config.JoystickViewCentering );
+static MenuEntry_t ME_JOYSTICK_VIEW_CENTERING = MAKE_MENUENTRY( "View centering:", &MF_Redfont, &MEF_BigOptionsRtSections, &MEO_JOYSTICK_VIEW_CENTERING, Option );
 
 static MenuOption_t MEO_JOYSTICK_AIM_ASSIST = MAKE_MENUOPTION( &MF_Redfont, &MEOS_OffOn, &ud.config.JoystickAimAssist );
 static MenuEntry_t ME_JOYSTICK_AIM_ASSIST = MAKE_MENUENTRY( "Stick aim assist:", &MF_Redfont, &MEF_BigOptionsRtSections, &MEO_JOYSTICK_AIM_ASSIST, Option );
@@ -2020,8 +2016,11 @@ static int Menu_IsEditingPrimaryJoystick(void)
 
 static void Menu_UpdateJoystickAdvancedEntries(void)
 {
+    int32_t * const viewCentering = Menu_GetSelectedJoystickViewCentering();
+    *viewCentering = CONFIG_NormalizeControllerViewCentering(*viewCentering);
+
     MEO_JOYSTICK_WEIGHTED_AIMING.variable = Menu_GetSelectedJoystickAimWeight();
-    MEO_JOYSTICK_VIEW_CENTERING.variable = Menu_GetSelectedJoystickViewCentering();
+    MEO_JOYSTICK_VIEW_CENTERING.data = viewCentering;
     MEO_JOYSTICK_AIM_ASSIST.data = Menu_GetSelectedJoystickAimAssist();
 }
 
@@ -2198,6 +2197,8 @@ static void Menu_ApplySelectedPlayerSetup(void)
 {
     if (Menu_IsEditingPrimaryPlayerSetup())
     {
+        ud.config.AutoAim = clamp(ud.config.AutoAim, 0, 2);
+        ud.config.SplitScreenPlayerAutoAim[0] = ud.config.AutoAim;
         ud.auto_run = ud.config.SplitScreenPlayerAlwaysRun[0] != 0;
         Bstrncpyz(ud.config.SplitScreenPlayerName[0], szPlayerName, sizeof(ud.config.SplitScreenPlayerName[0]));
         if ((unsigned)myconnectindex < MAXPLAYERS)
@@ -3095,7 +3096,7 @@ static void Menu_Pre(MenuID_t cm)
         Menu_UpdateJoystickAdvancedEntries();
         MenuEntry_DisableOnCondition(&ME_JOYSTICK_EDITBUTTONS, !CONTROL_JoyPresent || (joystick.numButtons == 0 && joystick.numHats == 0));
         MenuEntry_DisableOnCondition(&ME_JOYSTICK_EDITAXES, !CONTROL_JoyPresent || joystick.numAxes == 0);
-        MenuEntry_DisableOnCondition(&ME_JOYSTICK_AIM_ASSIST, !*Menu_GetSelectedJoystickViewCentering());
+        MenuEntry_DisableOnCondition(&ME_JOYSTICK_AIM_ASSIST, !CONFIG_NormalizeControllerViewCentering(*Menu_GetSelectedJoystickViewCentering()));
         break;
     case MENU_JOYSTICKAXES:
         MenuEntry_HideOnCondition(&ME_JOYSTICKAXIS_TRIGGERFUNCTION, !joystick.isGameController || M_JOYSTICKAXES.currentEntry < 4);
