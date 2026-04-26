@@ -244,11 +244,8 @@ static void Defs_ApplyPaletteToTileBuffer(int32_t const tsiz, int32_t const pal)
         faketilebuffer[i] = palookup[pal][faketilebuffer[i]];
 }
 
-static int32_t Defs_ImportTileFromTexture(char const * const fn, int32_t const tile, int32_t const alphacut, int32_t istexture)
+static int32_t Defs_ImportTileFromTextureInternal(char const * const fn, int32_t const tile, int32_t const alphacut, int32_t istexture)
 {
-    if (check_file_exist(fn))
-        return -1;
-
     int32_t xsiz = 0, ysiz = 0;
     palette_t *picptr = NULL;
 
@@ -316,6 +313,36 @@ static int32_t Defs_ImportTileFromTexture(char const * const fn, int32_t const t
 #endif
 
     return 0;
+}
+
+static int32_t Defs_ImportTileFromTexture(char const * const fn, int32_t const tile, int32_t const alphacut, int32_t istexture)
+{
+    if (!check_file_exist(fn))
+        return Defs_ImportTileFromTextureInternal(fn, tile, alphacut, istexture);
+
+#ifdef _WIN32
+    if (char *appdir = Bgetappdir())
+    {
+        char appfile[BMAX_PATH];
+        Bsnprintf(appfile, ARRAY_SIZE(appfile), "%s/%s", appdir, fn);
+        Bcorrectfilename(appfile, 0);
+
+        int const bakpathsearchmode = pathsearchmode;
+        pathsearchmode = 1;
+
+        int32_t status = -1;
+        if (!check_file_exist(appfile))
+            status = Defs_ImportTileFromTextureInternal(appfile, tile, alphacut, istexture);
+
+        pathsearchmode = bakpathsearchmode;
+        Xfree(appdir);
+
+        if (status != -1)
+            return status;
+    }
+#endif
+
+    return -1;
 }
 
 class TileMatchChecker

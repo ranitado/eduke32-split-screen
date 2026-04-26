@@ -64,6 +64,51 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 # define GAME_STATIC static
 #endif
 
+#ifdef SPLITSCREEN_MOD_HACKS
+static void G_LoadSplitScreenAssetDefinitions(void)
+{
+    static char const * const assetDefs[] =
+    {
+        "splitscreen_logo.def",
+        "splitscreen_rpg.def",
+    };
+
+    int const bakpathsearchmode = pathsearchmode;
+    pathsearchmode = 1;
+
+# if defined _WIN32
+    char *appdir = Bgetappdir();
+    if (appdir)
+        addsearchpath(appdir);
+# endif
+
+    for (char const * const def : assetDefs)
+    {
+        if (!loaddefinitionsfile(def))
+            LOG_F(INFO, "Split-screen asset definitions file '%s' loaded.", def);
+    }
+
+# if defined _WIN32
+    if (appdir)
+    {
+        for (char const * const def : assetDefs)
+        {
+            char appdef[BMAX_PATH];
+            Bsnprintf(appdef, ARRAY_SIZE(appdef), "%s/%s", appdir, def);
+            Bcorrectfilename(appdef, 0);
+
+            if (!loaddefinitionsfile(appdef))
+                LOG_F(INFO, "Split-screen asset definitions file '%s' loaded.", appdef);
+        }
+
+        Xfree(appdir);
+    }
+# endif
+
+    pathsearchmode = bakpathsearchmode;
+}
+#endif
+
 static uint8_t g_localPerPlayerPickupMask[MAXPLAYERS][bitmap_size(MAXSPRITES)];
 
 int32_t G_LocalPerPlayerPickupsEnabled(void)
@@ -7214,6 +7259,9 @@ int app_main(int argc, char const* const* argv)
         uint32_t etime = timerGetTicks();
         LOG_F(INFO, "Definitions file '%s' loaded in %d ms.", deffile, etime-stime);
     }
+#ifdef SPLITSCREEN_MOD_HACKS
+    G_LoadSplitScreenAssetDefinitions();
+#endif
     loaddefinitions_game(deffile, FALSE);
 
     for (char * m : g_defModules)
