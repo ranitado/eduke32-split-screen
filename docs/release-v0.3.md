@@ -12,6 +12,7 @@ Use `eduke32-split-screen-v0.3-windows-x64.zip` from the GitHub release.
 - Improved split-screen results screen with per-player kills/secrets.
 - Fixed weapon pickup notifications and pickup sounds.
 - Improved controller compatibility and first-run display handling.
+- Improved SteamOS/Proton compatibility for custom split-screen assets.
 
 ## Installation
 

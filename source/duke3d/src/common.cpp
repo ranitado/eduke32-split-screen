@@ -260,6 +260,16 @@ void G_ExtPreInit(int32_t argc,char const * const * argv)
 #endif
         addsearchpath(cwd);
 
+#if defined _WIN32
+    // Steam/Proton may launch the executable with a different working directory.
+    // Keep root DEF files and custom assets discoverable from beside the EXE.
+    if (char *appdir = Bgetappdir())
+    {
+        addsearchpath(appdir);
+        Xfree(appdir);
+    }
+#endif
+
 #if defined(_WIN32) && !defined(EDUKE32_STANDALONE)
     if (buildvfs_exists("user_profiles_enabled"))
 #else
