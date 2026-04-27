@@ -49,6 +49,7 @@ constexpr float VERTICAL_AIM_FEEL_SCALE = 1.2f;
 constexpr float LOOK_RATE       = TURN_RATE * 0.25f * VERTICAL_AIM_FEEL_SCALE;
 constexpr float PRECISION_AIM_SENS_X = 1.f;
 constexpr float PRECISION_AIM_SENS_Y = 1.f;
+constexpr float AIM_REFERENCE_FPS = 60.f;
 constexpr int MAX_LOCAL_PLAYERS = 4;
 constexpr uint8_t WEAPON_REPEAT_INITIAL_DELAY = 12;
 constexpr uint8_t WEAPON_REPEAT_INTERVAL = 4;
@@ -62,6 +63,7 @@ enum split_config_menu_page_t
     SPLIT_CONFIG_MENU_PLAYER,
     SPLIT_CONFIG_MENU_CONTROL,
     SPLIT_CONFIG_MENU_CONTROLLER,
+    SPLIT_CONFIG_MENU_DISCONNECT_CONFIRM,
 };
 
 struct split_config_menu_state_t
@@ -102,6 +104,9 @@ static uint8_t g_splitScreenWeaponPulseFrames[MAXPLAYERS];
 static uint8_t g_splitScreenPausePulseFrames[MAXPLAYERS];
 static split_config_menu_state_t g_splitScreenConfigMenu[MAXPLAYERS];
 static uint32_t g_splitScreenContinuePrevButtons[MAX_LOCAL_PLAYERS];
+static uint32_t g_splitScreenJoinPrevButtons[MAX_LOCAL_PLAYERS];
+static uint8_t g_splitScreenJoinSuppressFrames[MAXPLAYERS];
+static uint64_t g_splitScreenAimLastTicks[MAXPLAYERS];
 
 static char const * const s_splitMenuAutoAimNames[] = { "Never", "Always", "Hitscan only" };
 static int32_t const s_splitMenuAutoAimValues[] = { 0, 1, 2 };
@@ -126,9 +131,14 @@ static int G_GetFirstGamepadViewIndex(void)
     return ud.config.SplitScreenSeparateKeyboardMouse ? 1 : 0;
 }
 
-static int G_GetGamepadIndexForView(int const viewIndex)
+static int G_GetGamepadIndexForPlayer(int const playerNum)
 {
-    return ud.config.SplitScreenSeparateKeyboardMouse ? viewIndex - 1 : viewIndex;
+    return ud.config.SplitScreenSeparateKeyboardMouse ? playerNum - 1 : playerNum;
+}
+
+static int G_GetPlayerForGamepadIndex(int const gamepadIndex)
+{
+    return ud.config.SplitScreenSeparateKeyboardMouse ? gamepadIndex + 1 : gamepadIndex;
 }
 
 static bool G_GamepadButtonHeld(uint32_t const buttons, int const button)
@@ -152,15 +162,18 @@ static void G_ClearSplitScreenContinueInputLocal(void)
     int const viewCount = G_GetSplitScreenContinueViewCount();
     int const firstGamepadViewIndex = G_GetFirstGamepadViewIndex();
 
-    for (int viewIndex = 0; viewIndex < MAX_LOCAL_PLAYERS; ++viewIndex)
+    for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_PLAYERS; ++gamepadIndex)
+        g_splitScreenContinuePrevButtons[gamepadIndex] = 0;
+
+    for (int viewIndex = firstGamepadViewIndex; viewIndex < viewCount; ++viewIndex)
     {
-        if (viewIndex >= firstGamepadViewIndex && viewIndex < viewCount)
-        {
-            gamepadstate_t state {};
-            g_splitScreenContinuePrevButtons[viewIndex] = joyGetGamepadState(G_GetGamepadIndexForView(viewIndex), &state) == 0 ? state.buttons : 0;
-        }
-        else
-            g_splitScreenContinuePrevButtons[viewIndex] = 0;
+        int const playerNum = G_GetSplitScreenPlayer(viewIndex);
+        int const gamepadIndex = G_GetGamepadIndexForPlayer(playerNum);
+        if ((unsigned)gamepadIndex >= MAX_LOCAL_PLAYERS)
+            continue;
+
+        gamepadstate_t state {};
+        g_splitScreenContinuePrevButtons[gamepadIndex] = joyGetGamepadState(gamepadIndex, &state) == 0 ? state.buttons : 0;
     }
 }
 
@@ -172,28 +185,23 @@ static int32_t G_CheckSplitScreenContinueInputLocal(void)
 
     for (int viewIndex = firstGamepadViewIndex; viewIndex < viewCount; ++viewIndex)
     {
-        gamepadstate_t state {};
-        uint32_t const buttons = joyGetGamepadState(G_GetGamepadIndexForView(viewIndex), &state) == 0 ? state.buttons : 0;
+        int const playerNum = G_GetSplitScreenPlayer(viewIndex);
+        int const gamepadIndex = G_GetGamepadIndexForPlayer(playerNum);
+        if ((unsigned)gamepadIndex >= MAX_LOCAL_PLAYERS)
+            continue;
 
-        pressed |= (buttons & ~g_splitScreenContinuePrevButtons[viewIndex]) != 0;
-        g_splitScreenContinuePrevButtons[viewIndex] = buttons;
+        gamepadstate_t state {};
+        uint32_t const buttons = joyGetGamepadState(gamepadIndex, &state) == 0 ? state.buttons : 0;
+
+        pressed |= (buttons & ~g_splitScreenContinuePrevButtons[gamepadIndex]) != 0;
+        g_splitScreenContinuePrevButtons[gamepadIndex] = buttons;
     }
 
     return pressed;
 }
 
-static int G_GetControllerProfileForView(int const viewIndex)
-{
-    return clamp(viewIndex, 0, MAXSPLITSCREENCONTROLLERS - 1);
-}
-
 static int G_GetControllerProfileForPlayer(int const playerNum)
 {
-    int const playerCount = min<int32_t>(G_GetSplitScreenPlayerCount(), MAX_LOCAL_PLAYERS);
-    for (int viewIndex = 0; viewIndex < playerCount; ++viewIndex)
-        if (G_GetSplitScreenPlayer(viewIndex) == playerNum)
-            return G_GetControllerProfileForView(viewIndex);
-
     return clamp(playerNum, 0, MAXSPLITSCREENCONTROLLERS - 1);
 }
 
@@ -556,9 +564,10 @@ static int G_GetSplitScreenConfigMenuEntryCount(split_config_menu_page_t const p
 {
     switch (page)
     {
-        case SPLIT_CONFIG_MENU_MAIN:       return 2;
+        case SPLIT_CONFIG_MENU_MAIN:       return 3;
         case SPLIT_CONFIG_MENU_PLAYER:     return G_ShowSplitScreenPlayerTeamOption() ? 5 : 4;
         case SPLIT_CONFIG_MENU_CONTROLLER: return 5;
+        case SPLIT_CONFIG_MENU_DISCONNECT_CONFIRM: return 2;
         default:                           return 0;
     }
 }
@@ -664,8 +673,10 @@ static void G_ActivateSplitScreenConfigMenuEntry(int const playerNum, int const 
         case SPLIT_CONFIG_MENU_MAIN:
             if (menu.current == 0)
                 G_SetSplitScreenConfigMenuPage(playerNum, SPLIT_CONFIG_MENU_PLAYER);
-            else
+            else if (menu.current == 1)
                 G_SetSplitScreenConfigMenuPage(playerNum, SPLIT_CONFIG_MENU_CONTROLLER);
+            else
+                G_SetSplitScreenConfigMenuPage(playerNum, SPLIT_CONFIG_MENU_DISCONNECT_CONFIRM);
             break;
 
         case SPLIT_CONFIG_MENU_PLAYER:
@@ -684,6 +695,13 @@ static void G_ActivateSplitScreenConfigMenuEntry(int const playerNum, int const 
             }
             else
                 G_ModifySplitScreenConfigMenuEntry(playerNum, controllerProfile, 1);
+            break;
+
+        case SPLIT_CONFIG_MENU_DISCONNECT_CONFIRM:
+            if (menu.current == 1 && G_DisconnectSplitScreenPlayer(playerNum) == 0)
+                G_CloseSplitScreenConfigMenu(playerNum);
+            else
+                G_SetSplitScreenConfigMenuPage(playerNum, SPLIT_CONFIG_MENU_MAIN);
             break;
 
         default:
@@ -758,8 +776,10 @@ static void G_FormatSplitScreenConfigMenuLine(int const playerNum, int const con
         case SPLIT_CONFIG_MENU_MAIN:
             if (menu.current == 0)
                 Bsnprintf(buffer, bufferSize, "Player Setup");
-            else
+            else if (menu.current == 1)
                 Bsnprintf(buffer, bufferSize, "Controller Setup");
+            else
+                Bsnprintf(buffer, bufferSize, "Disconnect player");
             break;
 
         case SPLIT_CONFIG_MENU_PLAYER:
@@ -811,6 +831,13 @@ static void G_FormatSplitScreenConfigMenuLine(int const playerNum, int const con
                 Bsnprintf(buffer, bufferSize, "View centering: %s", CONFIG_GetControllerViewCenteringName(G_GetConfiguredViewCentering(controllerProfile)));
             else if (menu.current == 4)
                 Bsnprintf(buffer, bufferSize, "Reset to defaults");
+            break;
+
+        case SPLIT_CONFIG_MENU_DISCONNECT_CONFIRM:
+            if (menu.current == 0)
+                Bsnprintf(buffer, bufferSize, "Cancel");
+            else
+                Bsnprintf(buffer, bufferSize, "Disconnect player");
             break;
 
         default:
@@ -967,6 +994,23 @@ static fix16_t G_ScaleAxisToAngle(int16_t const value, float const maxRate)
     return fix16_from_float((value / 32767.f) * maxRate);
 }
 
+static float G_GetSplitScreenAimFrameScale(int const playerNum)
+{
+    if ((unsigned)playerNum >= MAXPLAYERS)
+        return 1.f;
+
+    uint64_t const now = timerGetNanoTicks();
+    uint64_t const tickRate = timerGetNanoTickRate();
+    uint64_t elapsedTicks = g_splitScreenAimLastTicks[playerNum] ? now - g_splitScreenAimLastTicks[playerNum] : tickRate / (uint64_t)AIM_REFERENCE_FPS;
+    g_splitScreenAimLastTicks[playerNum] = now;
+
+    if (tickRate == 0)
+        return 1.f;
+
+    double const elapsedSeconds = (double)elapsedTicks / (double)tickRate;
+    return (float)clamp<double>(elapsedSeconds * AIM_REFERENCE_FPS, 0.25, 3.0);
+}
+
 static void G_ApplyConfiguredAimWeight(int const controllerProfile, input_t &input)
 {
     int const aimWeight = G_GetConfiguredAimWeight(controllerProfile);
@@ -1010,6 +1054,8 @@ static void G_ClearSplitScreenPadInput(int const playerNum)
     g_splitScreenWeaponPulseDir[playerNum] = 0;
     g_splitScreenWeaponPulseFrames[playerNum] = 0;
     g_splitScreenPausePulseFrames[playerNum] = 0;
+    g_splitScreenAimLastTicks[playerNum] = 0;
+    g_splitScreenJoinSuppressFrames[playerNum] = 0;
 }
 
 static void G_FreezeSplitScreenPadInput(int const playerNum, gamepadstate_t const &state)
@@ -1024,6 +1070,7 @@ static void G_FreezeSplitScreenPadInput(int const playerNum, gamepadstate_t cons
     g_splitScreenWeaponPulseDir[playerNum] = 0;
     g_splitScreenWeaponPulseFrames[playerNum] = 0;
     g_splitScreenPausePulseFrames[playerNum] = 0;
+    g_splitScreenAimLastTicks[playerNum] = 0;
 
     if (state.connected)
         G_UpdatePreviousGamepadState(playerNum, state);
@@ -1055,6 +1102,13 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
     }
 
     g_splitScreenPadConnected[playerNum] = 1;
+
+    if (g_splitScreenJoinSuppressFrames[playerNum] > 0)
+    {
+        --g_splitScreenJoinSuppressFrames[playerNum];
+        G_FreezeSplitScreenPadInput(playerNum, state);
+        return;
+    }
 
     bool const pauseEdgePressed = G_GamepadButtonPressed(state.buttons, g_splitScreenPrevButtons[playerNum], GP_START);
     if (G_IsSecondarySplitScreenPlayer(playerNum))
@@ -1096,6 +1150,7 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
         g_splitScreenWeaponRepeatDelay[playerNum] = 0;
         g_splitScreenWeaponPulseDir[playerNum] = 0;
         g_splitScreenWeaponPulseFrames[playerNum] = 0;
+        g_splitScreenAimLastTicks[playerNum] = 0;
         if ((pPlayer->gm & (MODE_MENU | MODE_TYPE)) != 0)
             g_splitScreenPausePulseFrames[playerNum] = 0;
         return;
@@ -1126,11 +1181,12 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
     int const moveLimit = playerRunning ? RUNKEYMOVE : WALKKEYMOVE;
     float const aimScaleX = precisionAim ? G_GetPrecisionAimScale(controllerProfile, analog_turning, GAMEPAD_AXIS_RIGHTX, PRECISION_AIM_SENS_X) : 1.f;
     float const aimScaleY = precisionAim ? G_GetPrecisionAimScale(controllerProfile, analog_lookingupanddown, GAMEPAD_AXIS_RIGHTY, PRECISION_AIM_SENS_Y) : 1.f;
+    float const aimFrameScale = G_GetSplitScreenAimFrameScale(playerNum);
 
     input.fvel    = (int16_t)-G_ScaleAxisToVelocity(G_GetConfiguredAnalogValue(controllerProfile, state, analog_moving, GAMEPAD_AXIS_LEFTY), moveLimit);
     input.svel    = (int16_t)-G_ScaleAxisToVelocity(G_GetConfiguredAnalogValue(controllerProfile, state, analog_strafing, GAMEPAD_AXIS_LEFTX), moveLimit);
-    input.q16avel = G_ScaleAxisToAngle(G_GetConfiguredAnalogValue(controllerProfile, state, analog_turning, GAMEPAD_AXIS_RIGHTX), TURN_RATE * aimScaleX);
-    input.q16horz = -G_ScaleAxisToAngle(G_GetConfiguredAnalogValue(controllerProfile, state, analog_lookingupanddown, GAMEPAD_AXIS_RIGHTY), LOOK_RATE * aimScaleY);
+    input.q16avel = G_ScaleAxisToAngle(G_GetConfiguredAnalogValue(controllerProfile, state, analog_turning, GAMEPAD_AXIS_RIGHTX), TURN_RATE * aimScaleX * aimFrameScale);
+    input.q16horz = -G_ScaleAxisToAngle(G_GetConfiguredAnalogValue(controllerProfile, state, analog_lookingupanddown, GAMEPAD_AXIS_RIGHTY), LOOK_RATE * aimScaleY * aimFrameScale);
     G_ApplyConfiguredAimWeight(controllerProfile, input);
 
     input.bits |= (1u << SK_AIMMODE);
@@ -1230,6 +1286,48 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
 
     G_UpdatePreviousGamepadState(playerNum, state);
 }
+
+static bool G_CanJoinCurrentGame(void)
+{
+    if (g_netServer || g_netClient || G_GetSplitScreenPlayerCount() >= MAX_LOCAL_PLAYERS)
+        return false;
+
+    auto const primaryPlayer = g_player[myconnectindex].ps;
+    if (primaryPlayer == nullptr || (primaryPlayer->gm & MODE_GAME) == 0 || (primaryPlayer->gm & (MODE_MENU | MODE_TYPE)) != 0 || ud.pause_on)
+        return false;
+
+    return ud.m_coop == 1 || !G_HaveSplitScreen();
+}
+
+static void G_UpdateSplitScreenJoinInputs(void)
+{
+    bool const canJoin = G_CanJoinCurrentGame();
+    int const connectedGamepads = min<int>(joyGetConnectedGamepadCount(), MAX_LOCAL_PLAYERS);
+
+    for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_PLAYERS; ++gamepadIndex)
+    {
+        gamepadstate_t state {};
+        uint32_t const buttons = gamepadIndex < connectedGamepads && joyGetGamepadState(gamepadIndex, &state) == 0 && state.connected
+            ? state.buttons
+            : 0;
+
+        int const playerNum = G_GetPlayerForGamepadIndex(gamepadIndex);
+        bool const startPressed = G_GamepadButtonPressed(buttons, g_splitScreenJoinPrevButtons[gamepadIndex], GP_START);
+
+        if (canJoin && startPressed && (unsigned)playerNum < MAX_LOCAL_PLAYERS && !G_IsSplitScreenPlayerActive(playerNum))
+        {
+            if (G_AddSplitScreenPlayer(playerNum) >= 0)
+            {
+                G_CloseSplitScreenConfigMenu(playerNum);
+                G_FreezeSplitScreenPadInput(playerNum, state);
+                g_splitScreenJoinSuppressFrames[playerNum] = 2;
+                G_PlaySplitScreenMenuSound(PISTOL_BODYHIT);
+            }
+        }
+
+        g_splitScreenJoinPrevButtons[gamepadIndex] = buttons;
+    }
+}
 }
 
 void G_ClearSplitScreenContinueInput(void)
@@ -1266,6 +1364,9 @@ void G_DrawSplitScreenConfigMenus(void)
 
 void G_UpdateSplitScreenLocalInputs(void)
 {
+    M_UpdateDeveloperModeToggle();
+    G_UpdateSplitScreenJoinInputs();
+
     if (!G_HasNativeSplitScreenGamepads())
     {
         G_CloseAllSplitScreenConfigMenus();
@@ -1296,14 +1397,15 @@ void G_UpdateSplitScreenLocalInputs(void)
                 continue;
 
             gamepadstate_t state {};
-            if (joyGetGamepadState(G_GetGamepadIndexForView(viewIndex), &state) == 0)
+            if (joyGetGamepadState(G_GetGamepadIndexForPlayer(playerNum), &state) == 0)
                 G_FreezeSplitScreenPadInput(playerNum, state);
             else
                 G_ClearSplitScreenPadInput(playerNum);
         }
 
-        for (int playerNum = playerCount; playerNum < MAX_LOCAL_PLAYERS; ++playerNum)
-            G_ClearSplitScreenPadInput(playerNum);
+        for (int playerNum = 0; playerNum < MAX_LOCAL_PLAYERS; ++playerNum)
+            if (!G_IsSplitScreenPlayerActive(playerNum))
+                G_ClearSplitScreenPadInput(playerNum);
 
         return;
     }
@@ -1314,18 +1416,21 @@ void G_UpdateSplitScreenLocalInputs(void)
         if ((unsigned)playerNum >= MAXPLAYERS)
             continue;
 
-        int const gamepadIndex = G_GetGamepadIndexForView(viewIndex);
+        int const gamepadIndex = G_GetGamepadIndexForPlayer(playerNum);
         gamepadstate_t state {};
         if (joyGetGamepadState(gamepadIndex, &state) == 0)
-            G_BuildSplitScreenPadInput(playerNum, G_GetControllerProfileForView(viewIndex), state);
+            G_BuildSplitScreenPadInput(playerNum, G_GetControllerProfileForPlayer(playerNum), state);
         else
             G_ClearSplitScreenPadInput(playerNum);
     }
 
-    for (int playerNum = playerCount; playerNum < MAX_LOCAL_PLAYERS; ++playerNum)
+    for (int playerNum = 0; playerNum < MAX_LOCAL_PLAYERS; ++playerNum)
     {
-        G_CloseSplitScreenConfigMenu(playerNum);
-        G_ClearSplitScreenPadInput(playerNum);
+        if (!G_IsSplitScreenPlayerActive(playerNum))
+        {
+            G_CloseSplitScreenConfigMenu(playerNum);
+            G_ClearSplitScreenPadInput(playerNum);
+        }
     }
 }
 

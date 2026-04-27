@@ -838,8 +838,70 @@ void G_DeleteSave(savebrief_t const & sv)
     }
 
     buildvfs_unlink(temp);
+    char addonMeta[BMAX_PATH + 16];
+    Bsnprintf(addonMeta, sizeof(addonMeta), "%s.addon", temp);
+    buildvfs_unlink(addonMeta);
     Bstrcat(temp, ".ext");
     buildvfs_unlink(temp);
+}
+
+static int32_t G_TryReadSaveAddonMetadata(char const * const fn)
+{
+    if (fn == nullptr || fn[0] == '\0')
+        return -1;
+
+    char addonMeta[BMAX_PATH + 16];
+    Bsnprintf(addonMeta, sizeof(addonMeta), "%s.addon", fn);
+
+    BFILE * const fp = Bfopen(addonMeta, "rb");
+    if (fp == nullptr)
+        return -1;
+
+    char line[64] = {};
+    int32_t addonNum = -1;
+
+    if (Bfgets(line, sizeof(line), fp) != nullptr)
+    {
+        if (Bsscanf(line, "addon %d", &addonNum) != 1)
+            Bsscanf(line, "%d", &addonNum);
+    }
+
+    Bfclose(fp);
+
+    return (addonNum >= ADDON_NONE && addonNum < NUMADDONS) ? addonNum : -1;
+}
+
+int32_t G_ReadSaveAddonMetadata(char const * const fn)
+{
+    int32_t const directAddon = G_TryReadSaveAddonMetadata(fn);
+    if (directAddon >= ADDON_NONE)
+        return directAddon;
+
+    char modPath[BMAX_PATH];
+    if (G_ModDirSnprintf(modPath, sizeof(modPath), "%s", fn) == 0)
+    {
+        int32_t const modAddon = G_TryReadSaveAddonMetadata(modPath);
+        if (modAddon >= ADDON_NONE)
+            return modAddon;
+    }
+
+    return -1;
+}
+
+static void G_WriteSaveAddonMetadata(char const * const fn)
+{
+    if (fn == nullptr || fn[0] == '\0')
+        return;
+
+    char addonMeta[BMAX_PATH + 16];
+    Bsnprintf(addonMeta, sizeof(addonMeta), "%s.addon", fn);
+
+    BFILE * const fp = Bfopen(addonMeta, "wb");
+    if (fp == nullptr)
+        return;
+
+    Bfprintf(fp, "addon %d\n", g_addonNum);
+    Bfclose(fp);
 }
 
 void G_DeleteOldSaves(void)
@@ -935,6 +997,7 @@ int32_t G_SavePlayer(savebrief_t & sv, bool isAutoSave)
     sv_saveandmakesnapshot(fil, sv.name, 0, 0, 0, 0, isAutoSave);
 
     buildvfs_fclose(fil);
+    G_WriteSaveAddonMetadata(fn);
 
     if (!g_netServer && !g_netClient && G_CanUseLocalSavePlayerCount(ud.multimode))
     {

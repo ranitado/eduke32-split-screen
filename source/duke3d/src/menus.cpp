@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "compat.h"
 #include "demo.h"
 #include "duke3d.h"
+#include "grpscan.h"
 #include "in_android.h"
 #include "input.h"
 #include "config.h"
@@ -40,6 +41,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "sbar.h"
 #include "joystick.h"
 #include "splitscreen.h"
+
+EDUKE32_NORETURN void app_exit(int returnCode);
 
 #ifndef __ANDROID__
 droidinput_t droidinput;
@@ -55,7 +58,18 @@ droidinput_t droidinput;
 
 static int32_t Menu_GetSelectedSimpleGameMode(void);
 static int32_t Menu_GetSelectedSimpleLevel(void);
+static MenuID_t Menu_GetPostEpisodeSimpleNewGameMenu(void);
+static MenuID_t Menu_GetPostContentSimpleNewGameMenu(int32_t addonNum);
+static int32_t Menu_GetEpisodeMenuEntryCount(int32_t showUserMap);
+static int32_t Menu_GetEpisodeMenuStyleEntryCount(int32_t showUserMap);
 static void Menu_SetEpisodeStyleOffset(int32_t entryCount);
+static void Menu_CommitPendingSimpleGameState(void);
+static void Menu_PopulateSimpleLevelMenu(int32_t volumeIndex);
+static void Menu_SelectFirstEpisodeOfCurrentContent(void);
+static int32_t Menu_GetSkillSound(int32_t skillIndex);
+static void Menu_RefreshSkillMenuNames(void);
+static void Menu_StartConfiguredGame(int32_t skillIndex, int32_t skillSound);
+static void Menu_StartGameWithoutSkill(void);
 
 static FORCE_INLINE void Menu_StartTextInput()
 {
@@ -237,6 +251,7 @@ MenuFont_t MF_Minifont =              { { 4<<16, 5<<16 },   { 1<<16, 1<<16 },0, 
 
 static MenuMenuFormat_t MMF_Top_Main =             { {  MENU_MARGIN_CENTER<<16, 55<<16, }, -(170<<16) };
 static MenuMenuFormat_t MMF_Top_Episode =          { {  MENU_MARGIN_CENTER<<16, 48<<16, }, -(190<<16) };
+static MenuMenuFormat_t MMF_Top_ExtraContent =     { {  MENU_MARGIN_CENTER<<16, 68<<16, }, -(190<<16) };
 static MenuMenuFormat_t MMF_Top_LevelSelect =      { {  MENU_MARGIN_CENTER<<16, 50<<16, }, 186<<16 };
 static MenuMenuFormat_t MMF_Top_NewGameCustom =    { {  MENU_MARGIN_CENTER<<16, 48<<16, }, -(190<<16) };
 static MenuMenuFormat_t MMF_Top_NewGameCustomSub = { {  MENU_MARGIN_CENTER<<16, 48<<16, }, -(190<<16) };
@@ -316,6 +331,8 @@ static int g_lookAxis = -1;
 static int g_turnAxis = -1;
 static int32_t g_menuJoystickController = 0;
 static int32_t g_menuPlayerSetupPlayer = 0;
+static int32_t g_developerMode = 0;
+static int32_t g_developerModeToggleHeld = 0;
 
 /*
 MenuEntry_t is passed in arrays of pointers so that the callback function
@@ -440,13 +457,53 @@ static MenuEntry_t *MEL_PLAYERCOUNT[] = {
 };
 
 // Episode and Skill will be dynamically generated after CONs are parsed
+static constexpr int32_t MENU_ADDON_EPISODE_COUNT = 3;
+
+typedef struct MenuAddonEpisode_t
+{
+    char const *name;
+    char const *requiredFile;
+    char const * const *filenames;
+    int32_t filenameCount;
+    int32_t addonNum;
+    int32_t const *crcs;
+    int32_t crcCount;
+} MenuAddonEpisode_t;
+
+static char const * const Menu_DukeDCFilenames[] = { "DUKEDC.GRP", "dukedc.grp" };
+static char const * const Menu_CaribbeanFilenames[] = { "VACATION.GRP", "vacation.grp" };
+static char const * const Menu_CaribbeanCompanionFilenames[] = { "VACATION.PRG", "vacation.prg", "VACATION.CON", "vacation.con" };
+static char const * const Menu_NuclearWinterFilenames[] = { "NWINTER.GRP", "nwinter.grp" };
+static char const * const Menu_BaseSkillNames[] = { "PIECE OF CAKE", "LET'S ROCK", "COME GET SOME", "DAMN I'M GOOD" };
+static char const * const Menu_CaribbeanSkillNames[] = { "LOW TIDE", "MAKIN' WAVES", "BIG KAHUNA", "TSUNAMI" };
+
+static int32_t const Menu_DukeDCCrcs[] = { DUKEDC_CRC, DUKEDCPP_CRC, DUKEDC13_CRC, (int32_t)0x39A692BF, (int32_t)0xC63B6A8B };
+static int32_t const Menu_CaribbeanCrcs[] = { DUKECB_CRC, VACA15_CRC, VACAPP_CRC, VACA13_CRC, (int32_t)0x65B5F690, (int32_t)0x64CF2351 };
+static int32_t const Menu_NuclearWinterCrcs[] = { DUKENW_CRC, (int32_t)0xC7EFBFA9 };
+
+static MenuAddonEpisode_t const Menu_AddonEpisodes[MENU_ADDON_EPISODE_COUNT] =
+{
+    { "Duke it out in D.C.", "DUKEDC.GRP", Menu_DukeDCFilenames, (int32_t)ARRAY_SIZE(Menu_DukeDCFilenames), ADDON_DUKEDC, Menu_DukeDCCrcs, (int32_t)ARRAY_SIZE(Menu_DukeDCCrcs) },
+    { "Duke Caribbean", "a complete VACATION.GRP", Menu_CaribbeanFilenames, (int32_t)ARRAY_SIZE(Menu_CaribbeanFilenames), ADDON_CARIBBEAN, Menu_CaribbeanCrcs, (int32_t)ARRAY_SIZE(Menu_CaribbeanCrcs) },
+    { "Duke: Nuclear Winter", "NWINTER.GRP", Menu_NuclearWinterFilenames, (int32_t)ARRAY_SIZE(Menu_NuclearWinterFilenames), ADDON_NWINTER, Menu_NuclearWinterCrcs, (int32_t)ARRAY_SIZE(Menu_NuclearWinterCrcs) },
+};
+
 static MenuLink_t MEO_EPISODE = { MENU_LEVELSELECT, MA_Advance, };
 static MenuLink_t MEO_EPISODE_SHAREWARE = { MENU_BUYDUKE, MA_Advance, };
 static MenuEntry_t ME_EPISODE_TEMPLATE = MAKE_MENUENTRY( NULL, &MF_Redfont, &MEF_CenterMenu, &MEO_EPISODE, Link );
+static MenuLink_t MEO_EPISODE_BASEGAME = { MENU_SKILL, MA_Advance, };
+static MenuEntry_t ME_EPISODE_BASEGAME = MAKE_MENUENTRY( "Main Campaign", &MF_Redfont, &MEF_CenterMenu, &MEO_EPISODE_BASEGAME, Link );
+static MenuLink_t MEO_EPISODE_EXTRACONTENT = { MENU_EXTRACONTENT, MA_Advance, };
+static MenuEntry_t ME_EPISODE_EXTRACONTENT = MAKE_MENUENTRY( "Extra Content", &MF_Redfont, &MEF_CenterMenu, &MEO_EPISODE_EXTRACONTENT, Link );
 static MenuEntry_t ME_EPISODE[MAXVOLUMES];
+static MenuLink_t MEO_ADDON_EPISODE[MENU_ADDON_EPISODE_COUNT];
+static MenuEntry_t ME_ADDON_EPISODE[MENU_ADDON_EPISODE_COUNT];
+static int32_t g_addonEpisodeAvailable[MENU_ADDON_EPISODE_COUNT];
+static char g_addonEpisodeMessage[256];
 static MenuLink_t MEO_EPISODE_USERMAP = { MENU_USERMAP, MA_Advance, };
 static MenuEntry_t ME_EPISODE_USERMAP = MAKE_MENUENTRY( "User Map", &MF_Redfont, &MEF_CenterMenu, &MEO_EPISODE_USERMAP, Link );
-static MenuEntry_t *MEL_EPISODE[MAXVOLUMES+2]; // +2 for spacer and User Map
+static MenuEntry_t *MEL_EPISODE[MAXVOLUMES + MENU_ADDON_EPISODE_COUNT + 3]; // spacers, add-ons, and User Map
+static MenuEntry_t *MEL_EXTRACONTENT[MENU_ADDON_EPISODE_COUNT];
 static MenuLink_t MEO_LEVEL = { MENU_SKILL, MA_Advance, };
 static MenuEntry_t ME_LEVEL_TEMPLATE = MAKE_MENUENTRY( NULL, &MF_Redfont, &MEF_LevelSelect, &MEO_LEVEL, Link );
 static MenuEntry_t ME_LEVEL[MAXLEVELS];
@@ -744,6 +801,12 @@ static MenuEntry_t ME_SCREENSETUP_TEXTSIZE = MAKE_MENUENTRY( s_Scale, &MF_Redfon
 static MenuOption_t MEO_SCREENSETUP_LEVELSTATS = MAKE_MENUOPTION(&MF_Redfont, &MEOS_OffOn, &ud.levelstats);
 static MenuEntry_t ME_SCREENSETUP_LEVELSTATS = MAKE_MENUENTRY( "Level stats:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_SCREENSETUP_LEVELSTATS, Option );
 
+
+static char const *MEOSN_SCREENSETUP_HUDSTYLE[] = { "Basic", "Advanced" };
+static int32_t MEOSV_SCREENSETUP_HUDSTYLE[] = { HUD_STYLE_SPLITSCREEN, HUD_STYLE_SINGLEPLAYER };
+static MenuOptionSet_t MEOS_SCREENSETUP_HUDSTYLE = MAKE_MENUOPTIONSET(MEOSN_SCREENSETUP_HUDSTYLE, MEOSV_SCREENSETUP_HUDSTYLE, 0x6);
+static MenuOption_t MEO_SCREENSETUP_HUDSTYLE = MAKE_MENUOPTION(&MF_Redfont, &MEOS_SCREENSETUP_HUDSTYLE, &ud.config.SplitScreenHudStyle);
+static MenuEntry_t ME_SCREENSETUP_HUDSTYLE = MAKE_MENUENTRY("HUD style:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_SCREENSETUP_HUDSTYLE, Option);
 
 static MenuOption_t MEO_SCREENSETUP_SHOWPICKUPMESSAGES = MAKE_MENUOPTION(&MF_Redfont, &MEOS_OffOn, &ud.fta_on);
 static MenuEntry_t ME_SCREENSETUP_SHOWPICKUPMESSAGES = MAKE_MENUENTRY( "Game messages:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_SCREENSETUP_SHOWPICKUPMESSAGES, Option );
@@ -1275,6 +1338,7 @@ static MenuEntry_t *MEL_SCREENSETUP[] = {
 #ifdef EDUKE32_ANDROID_MENU
     &ME_SCREENSETUP_STATUSBARONTOP,
 #endif
+    &ME_SCREENSETUP_HUDSTYLE,
     &ME_SCREENSETUP_SCREENSIZE,
     &ME_SCREENSETUP_SBARSIZE,
 
@@ -1593,6 +1657,7 @@ static MenuEntry_t *MEL_NETJOIN[] = {
 static MenuMenu_t M_MAIN = MAKE_MENUMENU( NoTitle, &MMF_Top_Main, MEL_MAIN );
 static MenuMenu_t M_MAIN_INGAME = MAKE_MENUMENU( NoTitle, &MMF_Top_Main, MEL_MAIN_INGAME );
 static MenuMenu_t M_EPISODE = MAKE_MENUMENU( "Select An Episode", &MMF_Top_Episode, MEL_EPISODE );
+static MenuMenu_t M_EXTRACONTENT = MAKE_MENUMENU( "Extra Content", &MMF_Top_ExtraContent, MEL_EXTRACONTENT );
 static MenuMenu_t M_GAMEMODE = MAKE_MENUMENU( "Select Game Type", &MMF_Top_GameModeCentered, MEL_GAMEMODE );
 static MenuMenu_t M_LEVELSELECT = MAKE_MENUMENU( "Select A Level", &MMF_Top_LevelSelect, MEL_LEVEL );
 static MenuMenu_t M_PLAYERCOUNT = MAKE_MENUMENU( "Select Players", &MMF_Top_GameModeCentered, MEL_PLAYERCOUNT );
@@ -1679,6 +1744,7 @@ static MenuVerify_t M_KEYOVERRIDEVERIFY = { CURSOR_BOTTOMRIGHT, MENU_KEYBOARDKEY
 static MenuMessage_t M_NETWAITMASTER = { CURSOR_BOTTOMRIGHT, MENU_NULL, MA_None, };
 static MenuMessage_t M_NETWAITVOTES = { CURSOR_BOTTOMRIGHT, MENU_NULL, MA_None, };
 static MenuMessage_t M_BUYDUKE = { CURSOR_BOTTOMRIGHT, MENU_EPISODE, MA_Return, };
+static MenuMessage_t M_ADDONMESSAGE = { CURSOR_BOTTOMRIGHT, MENU_EPISODE, MA_Return, };
 
 static MenuTextForm_t M_ADULTPASSWORD = { NULL, "Enter Password:", MAXPWLOCKOUT, MTF_Password };
 static MenuTextForm_t M_CHEATENTRY = { NULL, "Enter Cheat Code:", MAXCHEATLEN, 0 };
@@ -1707,6 +1773,8 @@ static Menu_t Menus[] = {
     { &M_GAMEMODE, MENU_GAMEMODE, MENU_MAIN, MA_Return, Menu },
     { &M_LEVELSELECT, MENU_LEVELSELECT, MENU_EPISODE, MA_Return, Menu },
     { &M_PLAYERCOUNT, MENU_PLAYERCOUNT, MENU_GAMEMODE, MA_Return, Menu },
+    { &M_ADDONMESSAGE, MENU_ADDONMESSAGE, MENU_EPISODE, MA_Return, Message },
+    { &M_EXTRACONTENT, MENU_EXTRACONTENT, MENU_EPISODE, MA_Return, Menu },
     { &M_SKILL, MENU_SKILL, MENU_PREVIOUS, MA_Return, Menu },
 #ifndef EDUKE32_RETAIL_MENU
     { &M_GAMESETUP, MENU_GAMESETUP, MENU_OPTIONS, MA_Return, Menu },
@@ -1827,6 +1895,302 @@ static void MenuEntry_HideOnCondition(MenuEntry_t * const entry, const int32_t c
         entry->flags |= MEF_Hidden;
     else
         entry->flags &= ~MEF_Hidden;
+}
+
+static int32_t Menu_FileExistsInSearchPath(char const *filename)
+{
+    char *foundPath = nullptr;
+    int32_t const oldPathSearchMode = pathsearchmode;
+
+    pathsearchmode = 1;
+    int32_t const found = findfrompath(filename, &foundPath) >= 0;
+    pathsearchmode = oldPathSearchMode;
+
+    if (foundPath != nullptr)
+        Xfree(foundPath);
+
+    if (found)
+        return 1;
+
+    BFILE * const fp = Bfopen(filename, "rb");
+    if (fp == nullptr)
+        return 0;
+
+    Bfclose(fp);
+    return 1;
+}
+
+static int32_t Menu_IsAddonEpisodeAvailable(MenuAddonEpisode_t const &addon)
+{
+    auto const caribbeanHasCompanion = []() -> int32_t
+    {
+        for (auto const filename : Menu_CaribbeanCompanionFilenames)
+            if (Menu_FileExistsInSearchPath(filename))
+                return 1;
+
+        return 0;
+    };
+
+    if (addon.addonNum == ADDON_CARIBBEAN)
+    {
+        if (FindGroup(DUKECB_CRC) != nullptr || FindGroup(VACA13_CRC) != nullptr
+            || FindGroup((int32_t)0x65B5F690) != nullptr || FindGroup((int32_t)0x64CF2351) != nullptr)
+            return 1;
+
+        if (FindGroup(VACA15_CRC) != nullptr || FindGroup(VACAPP_CRC) != nullptr)
+            return caribbeanHasCompanion();
+    }
+
+    for (int32_t i = 0; i < addon.crcCount; ++i)
+        if (FindGroup(addon.crcs[i]) != nullptr)
+            return 1;
+
+    int32_t foundMainFile = 0;
+    for (int32_t i = 0; i < addon.filenameCount; ++i)
+    {
+        if (Menu_FileExistsInSearchPath(addon.filenames[i]))
+        {
+            foundMainFile = 1;
+            break;
+        }
+    }
+
+    if (!foundMainFile)
+        return 0;
+
+    if (addon.addonNum == ADDON_CARIBBEAN)
+        return 1;
+
+    return 1;
+}
+
+static int32_t Menu_RelaunchWithAddon(int32_t const addonNum, char const * const extraArgs = nullptr)
+{
+#ifdef _WIN32
+    char exePath[BMAX_PATH];
+    if (GetModuleFileNameA(nullptr, exePath, ARRAY_SIZE(exePath)) == 0)
+        return 0;
+
+    char commandLine[BMAX_PATH * 2 + 256];
+    if (addonNum > ADDON_NONE)
+        Bsnprintf(commandLine, sizeof(commandLine), "\"%s\" -noinstancechecking -addon %d%s%s", exePath, addonNum,
+                  extraArgs != nullptr && extraArgs[0] != '\0' ? " " : "",
+                  extraArgs != nullptr ? extraArgs : "");
+    else
+        Bsnprintf(commandLine, sizeof(commandLine), "\"%s\" -noinstancechecking%s%s", exePath,
+                  extraArgs != nullptr && extraArgs[0] != '\0' ? " " : "",
+                  extraArgs != nullptr ? extraArgs : "");
+
+    S_StopMusic();
+    S_MusicShutdown();
+    S_SoundShutdown();
+
+    STARTUPINFOA startupInfo {};
+    PROCESS_INFORMATION processInfo {};
+    startupInfo.cb = sizeof(startupInfo);
+    startupInfo.dwFlags = STARTF_USESHOWWINDOW;
+    startupInfo.wShowWindow = SW_SHOWNORMAL;
+
+    if (!CreateProcessA(nullptr, commandLine, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startupInfo, &processInfo))
+    {
+        G_ClearSplitScreenRelaunchState();
+        S_SoundStartup();
+        S_MusicStartup();
+        S_ClearSoundLocks();
+        S_RestartMusic();
+        return 0;
+    }
+
+    CloseHandle(processInfo.hProcess);
+    CloseHandle(processInfo.hThread);
+
+    app_exit(EXIT_SUCCESS);
+#else
+    UNREFERENCED_PARAMETER(addonNum);
+    UNREFERENCED_PARAMETER(extraArgs);
+    return 0;
+#endif
+}
+
+static void Menu_ResetTitleScreenTiles(void)
+{
+    artClearMapArt();
+    tileInvalidate(MENUSCREEN, -1, 255);
+    renderFlushPerms();
+    videoClearScreen(0L);
+    videoNextPage();
+}
+
+static int32_t Menu_GetAddonForSave(savebrief_t const &sv)
+{
+    if (!sv.isValid())
+        return g_addonNum;
+
+    int32_t const metadataAddon = G_ReadSaveAddonMetadata(sv.path);
+    if (metadataAddon >= ADDON_NONE)
+        return metadataAddon;
+
+    savehead_t h {};
+    if (G_LoadSaveHeaderNew(sv.path, &h) < 0)
+        return g_addonNum;
+
+    char const * const board = h.boardfn;
+    if (Bstrstr(board, "DUKEDC") || Bstrstr(board, "dukedc"))
+        return ADDON_DUKEDC;
+    if (Bstrstr(board, "NWINTER") || Bstrstr(board, "nwinter"))
+        return ADDON_NWINTER;
+    if (Bstrstr(board, "VACATION") || Bstrstr(board, "vacation") || Bstrstr(board, "VACA") || Bstrstr(board, "vaca"))
+        return ADDON_CARIBBEAN;
+
+    if (!Bstrcasecmp(h.scriptname, "DUKEDC.CON"))
+        return ADDON_DUKEDC;
+    if (!Bstrcasecmp(h.scriptname, "NWINTER.CON"))
+        return ADDON_NWINTER;
+    if (!Bstrcasecmp(h.scriptname, "VACATION.CON"))
+        return ADDON_CARIBBEAN;
+    if (Bstrstr(h.savename, "CARIBBEAN") || Bstrstr(h.savename, "Caribbean") || Bstrstr(h.savename, "caribbean"))
+        return ADDON_CARIBBEAN;
+    if (!Bstrcasecmp(h.scriptname, "GAME.CON"))
+        return ADDON_NONE;
+
+    return g_addonNum;
+}
+
+static void Menu_PrepareAddonEpisodeEntries(void)
+{
+    for (int32_t i = 0; i < MENU_ADDON_EPISODE_COUNT; ++i)
+    {
+        g_addonEpisodeAvailable[i] = Menu_IsAddonEpisodeAvailable(Menu_AddonEpisodes[i]);
+        MEO_ADDON_EPISODE[i].linkID = g_addonEpisodeAvailable[i] ? Menu_GetPostContentSimpleNewGameMenu(Menu_AddonEpisodes[i].addonNum) : MENU_ADDONMESSAGE;
+        MEO_ADDON_EPISODE[i].animation = MA_Advance;
+
+        ME_ADDON_EPISODE[i] = ME_EPISODE_TEMPLATE;
+        ME_ADDON_EPISODE[i].name = Menu_AddonEpisodes[i].name;
+        ME_ADDON_EPISODE[i].entry = &MEO_ADDON_EPISODE[i];
+
+        MenuEntry_LookDisabledOnCondition(&ME_ADDON_EPISODE[i], !g_addonEpisodeAvailable[i]);
+        MEL_EXTRACONTENT[i] = &ME_ADDON_EPISODE[i];
+    }
+}
+
+static void Menu_BuildEpisodeMenuEntryList(int32_t const showUserMap)
+{
+    int32_t entryIndex = 0;
+
+    if (g_developerMode)
+    {
+        for (int32_t i = 0; i < g_volumeCnt; ++i)
+            MEL_EPISODE[entryIndex++] = &ME_EPISODE[i];
+    }
+    else
+    {
+        MEL_EPISODE[entryIndex++] = &ME_EPISODE_BASEGAME;
+    }
+
+    if (MENU_ADDON_EPISODE_COUNT > 0)
+        MEL_EPISODE[entryIndex++] = &ME_EPISODE_EXTRACONTENT;
+
+    if (g_developerMode && showUserMap)
+    {
+        MEL_EPISODE[entryIndex++] = &ME_Space4_Redfont;
+        MEL_EPISODE[entryIndex++] = &ME_EPISODE_USERMAP;
+    }
+}
+
+static int32_t Menu_GetEpisodeMenuEntryCount(int32_t const showUserMap)
+{
+    if (VOLUMEONE)
+        return g_volumeCnt;
+
+    if (g_developerMode)
+        return g_volumeCnt + 1 + (showUserMap ? 2 : 0);
+
+    return 2;
+}
+
+static int32_t Menu_GetEpisodeMenuStyleEntryCount(int32_t const showUserMap)
+{
+    if (VOLUMEONE)
+        return g_volumeCnt;
+
+    if (g_developerMode)
+        return g_volumeCnt + 1 + (showUserMap ? 1 : 0);
+
+    return 2;
+}
+
+static void Menu_UpdateEpisodeMenu(int32_t const showUserMap)
+{
+    Menu_PrepareAddonEpisodeEntries();
+    MenuEntry_HideOnCondition(&ME_EPISODE_USERMAP, !g_developerMode || !showUserMap);
+    Menu_BuildEpisodeMenuEntryList(showUserMap);
+
+    M_EPISODE.title = g_developerMode ? "Select An Episode" : "Select Content";
+    M_EPISODE.numEntries = Menu_GetEpisodeMenuEntryCount(showUserMap);
+    M_EXTRACONTENT.numEntries = MENU_ADDON_EPISODE_COUNT;
+    MEO_EPISODE.linkID = Menu_GetPostEpisodeSimpleNewGameMenu();
+    MEO_EPISODE_BASEGAME.linkID = Menu_GetPostContentSimpleNewGameMenu(ADDON_NONE);
+    Menu_SetEpisodeStyleOffset(!g_developerMode && !VOLUMEONE ? 1 : Menu_GetEpisodeMenuStyleEntryCount(showUserMap));
+
+    if (!g_developerMode && !VOLUMEONE)
+        MMF_Top_Episode.pos.y += 5 << 16;
+}
+
+static int32_t Menu_GetAddonEpisodeIndex(MenuEntry_t const *entry)
+{
+    for (int32_t i = 0; i < MENU_ADDON_EPISODE_COUNT; ++i)
+        if (entry == &ME_ADDON_EPISODE[i])
+            return i;
+
+    return -1;
+}
+
+static int32_t Menu_GetActiveContentEntryIndex(void)
+{
+    if (g_addonNum == ADDON_NONE)
+        return 0;
+
+    for (int32_t i = 0; i < MENU_ADDON_EPISODE_COUNT; ++i)
+    {
+        if (g_addonNum == Menu_AddonEpisodes[i].addonNum)
+            return MENU_ADDON_EPISODE_COUNT > 0 ? (g_developerMode ? g_volumeCnt : 1) : 0;
+    }
+
+    return 0;
+}
+
+static void Menu_SetAddonEpisodeMessage(int32_t const addonIndex)
+{
+    MenuAddonEpisode_t const &addon = Menu_AddonEpisodes[addonIndex];
+
+    if (!g_addonEpisodeAvailable[addonIndex])
+    {
+        if (addon.addonNum == ADDON_CARIBBEAN)
+            Bsnprintf(g_addonEpisodeMessage, sizeof(g_addonEpisodeMessage),
+                "Duke Caribbean data is incomplete.\n"
+                "Use a complete VACATION.GRP or add\n"
+                "VACATION.PRG / VACATION.CON.");
+        else
+            Bsnprintf(g_addonEpisodeMessage, sizeof(g_addonEpisodeMessage),
+                "%s data not found.\n"
+                "Copy %s next to the executable\n"
+                "and restart DukeSplitScreen.",
+                addon.name, addon.requiredFile);
+        return;
+    }
+
+    if (g_addonNum == addon.addonNum)
+    {
+        Bsnprintf(g_addonEpisodeMessage, sizeof(g_addonEpisodeMessage),
+            "%s is already active.\n"
+            "Select one of its episodes above.",
+            addon.name);
+        return;
+    }
+
+    Bsnprintf(g_addonEpisodeMessage, sizeof(g_addonEpisodeMessage),
+        "Could not restart DukeSplitScreen.\n"
+        "Close the game and try again.");
 }
 
 static int32_t M_RunMenu_Menu(Menu_t *cm, MenuMenu_t *menu, MenuEntry_t *currentry, int32_t state, vec2_t origin, int actually_draw = 1);
@@ -2434,10 +2798,8 @@ void Menu_Init(void)
         }
         MEOS_NETOPTIONS_LEVEL[i].optionNames = MEOSN_NetLevels[i];
     }
-    M_EPISODE.numEntries = g_volumeCnt+2;
+    Menu_UpdateEpisodeMenu(1);
 #if 1 //ifndef EDUKE32_SIMPLE_MENU
-    MEL_EPISODE[g_volumeCnt] = &ME_Space4_Redfont;
-    MEL_EPISODE[g_volumeCnt+1] = &ME_EPISODE_USERMAP;
     MEOSN_NetEpisodes[k] = MenuUserMap;
     MEOSV_NetEpisodes[k] = MAXVOLUMES;
 #else
@@ -2447,8 +2809,8 @@ void Menu_Init(void)
     MEOS_NETOPTIONS_EPISODE.numOptions = k + 1;
     NetEpisode = MEOSV_NetEpisodes[0];
     MMF_Top_Episode.pos.y = (58 + (3-k)*6)<<16;
-    MEO_EPISODE.linkID = MENU_LEVELSELECT;
-    MEO_GAMEMODE_SINGLE.linkID = g_maxDefinedSkill == 0 ? MENU_NULL : MENU_SKILL;
+    MEO_EPISODE.linkID = Menu_GetPostEpisodeSimpleNewGameMenu();
+    MEO_GAMEMODE_SINGLE.linkID = MENU_EPISODE;
     MEO_GAMEMODE_COOPERATIVE.linkID = MENU_PLAYERCOUNT;
     MEO_GAMEMODE_DUKEMATCH.linkID = MENU_PLAYERCOUNT;
     M_EPISODE.currentEntry = ud.default_volume;
@@ -3205,9 +3567,7 @@ static void Menu_Pre(MenuID_t cm)
     case MENU_EPISODE:
     {
         bool const showUserMap = Menu_GetPendingSimpleGameMode() != 2;
-        MenuEntry_HideOnCondition(&ME_EPISODE_USERMAP, !showUserMap);
-        M_EPISODE.numEntries = g_volumeCnt + (showUserMap ? 2 : 0);
-        Menu_SetEpisodeStyleOffset(g_volumeCnt + (showUserMap ? 1 : 0));
+        Menu_UpdateEpisodeMenu(showUserMap);
         break;
     }
 
@@ -3378,8 +3738,8 @@ static void Menu_DrawSplitScreenHelp(const vec2_t origin)
         mminitext(origin.x + (172<<16), origin.y + (y<<16), keyboard[i], 8);
     }
 
-    creditsminitext(origin.x + (160<<16), origin.y + (144<<16), "SEPARATE KB/M PADS: OFF = P1 ALSO USES PAD 1", 12);
-    creditsminitext(origin.x + (160<<16), origin.y + (153<<16), "ON = KB/M IS P1, PADS START AT P2", 12);
+    creditsminitext(origin.x + (160<<16), origin.y + (148<<16), "SEPARATE KB/M PADS OFF: KB/M AND PAD 1 BOTH CONTROL P1", 12);
+    creditsminitext(origin.x + (160<<16), origin.y + (160<<16), "IN-GAME: PRESS START ON AN EXTRA CONTROLLER TO JOIN", 12);
 }
 #endif
 
@@ -3745,6 +4105,11 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
         mgametextcenter(origin.x, origin.y + ((148+16)<<16), "Press any key or button...");
         break;
 #endif
+    case MENU_ADDONMESSAGE:
+        mgametextcenter(origin.x, origin.y + (72<<16), g_addonEpisodeMessage);
+        mgametextcenter(origin.x, origin.y + ((148+16)<<16), "Press any key or button...");
+        break;
+
     case MENU_F1HELP:
 #ifdef SPLITSCREEN_MOD_HACKS
         Menu_DrawSplitScreenHelp(origin);
@@ -4199,7 +4564,9 @@ enum MenuSimpleGameMode_t
 static void Menu_ApplySimpleGameMode(int32_t mode);
 
 static bool g_forceSimpleGameModeDefault = true;
+static bool g_forceCommitPendingSimpleGameState = false;
 static int32_t g_simplePendingGameMode = MENU_SIMPLE_GAMEMODE_SINGLE;
+static int32_t g_simplePendingAddon = ADDON_NONE;
 static int32_t g_simplePendingVolume = 0;
 static int32_t g_simplePendingLevel = 0;
 static int32_t g_simplePendingLocalPlayerCount = 2;
@@ -4232,9 +4599,66 @@ static int32_t Menu_GetPendingSimpleGameMode(void)
     return clamp(g_simplePendingGameMode, 0, M_GAMEMODE.numEntries - 1);
 }
 
+static int32_t Menu_GetPendingAddon(void)
+{
+    return clamp(g_simplePendingAddon, ADDON_NONE, NUMADDONS - 1);
+}
+
 static int32_t Menu_GetPendingLocalPlayerCount(void)
 {
     return Menu_ClampLocalPlayerCount(g_simplePendingLocalPlayerCount);
+}
+
+static char const *Menu_GetSkillNameForAddon(int32_t const addonNum, int32_t const skillIndex)
+{
+    if (skillIndex < 0)
+        return s_Undefined;
+
+    if (skillIndex >= MAXSKILLS)
+        return s_Undefined;
+
+    if ((unsigned)skillIndex >= ARRAY_SIZE(Menu_BaseSkillNames))
+        return g_skillNames[skillIndex][0] ? g_skillNames[skillIndex] : s_Undefined;
+
+    if (addonNum == g_addonNum && g_skillNames[skillIndex][0])
+        return g_skillNames[skillIndex];
+
+    switch (addonNum)
+    {
+    case ADDON_CARIBBEAN:
+        return Menu_CaribbeanSkillNames[skillIndex];
+
+    case ADDON_NONE:
+    case ADDON_DUKEDC:
+    case ADDON_NWINTER:
+        return Menu_BaseSkillNames[skillIndex];
+
+    default:
+        return g_skillNames[skillIndex][0] ? g_skillNames[skillIndex] : s_Undefined;
+    }
+}
+
+static void Menu_RefreshSkillMenuNames(void)
+{
+    int32_t const pendingAddon = Menu_GetPendingAddon();
+    for (int32_t i = 0; i < M_SKILL.numEntries && i < MAXSKILLS; ++i)
+    {
+        ME_SKILL[i].name = Menu_GetSkillNameForAddon(pendingAddon, i);
+        MEOSN_NetSkills[i] = ME_SKILL[i].name;
+    }
+}
+
+static MenuID_t Menu_GetPostEpisodeSimpleNewGameMenu(void)
+{
+    return g_developerMode ? MENU_LEVELSELECT : (g_maxDefinedSkill == 0 ? MENU_NULL : MENU_SKILL);
+}
+
+static MenuID_t Menu_GetPostContentSimpleNewGameMenu(int32_t const addonNum)
+{
+    if (g_developerMode && addonNum == g_addonNum)
+        return MENU_LEVELSELECT;
+
+    return g_maxDefinedSkill == 0 ? MENU_NULL : MENU_SKILL;
 }
 
 static int32_t Menu_HaveSimpleNewGameFlow(int32_t const menuID)
@@ -4243,6 +4667,7 @@ static int32_t Menu_HaveSimpleNewGameFlow(int32_t const menuID)
     {
     case MENU_GAMEMODE:
     case MENU_EPISODE:
+    case MENU_EXTRACONTENT:
     case MENU_LEVELSELECT:
     case MENU_PLAYERCOUNT:
     case MENU_SKILL:
@@ -4255,7 +4680,9 @@ static int32_t Menu_HaveSimpleNewGameFlow(int32_t const menuID)
 
 static void Menu_ResetPendingSimpleGameState(int32_t const forceDefaultMode)
 {
+    g_forceCommitPendingSimpleGameState = false;
     g_simplePendingGameMode = forceDefaultMode ? MENU_SIMPLE_GAMEMODE_SINGLE : Menu_GetSelectedSimpleGameMode();
+    g_simplePendingAddon = g_addonNum;
     g_simplePendingVolume = 0;
     g_simplePendingLevel = 0;
     g_simplePendingLocalPlayerCount = Menu_GetCurrentLocalPlayerCount() > 1
@@ -4268,6 +4695,7 @@ static void Menu_CommitPendingSimpleGameState(void)
     Menu_ApplySimpleGameMode(Menu_GetPendingSimpleGameMode());
     ud.m_volume_number = g_simplePendingVolume;
     ud.m_level_number = g_simplePendingLevel;
+    g_forceCommitPendingSimpleGameState = false;
 }
 
 static void Menu_SetEpisodeStyleOffset(int32_t const entryCount)
@@ -4319,6 +4747,177 @@ static void Menu_PopulateSimpleLevelMenu(int32_t const volumeIndex)
 
     Menu_SetEpisodeStyleOffset(levelCount);
     Menu_AdjustForCurrentEntryAssignmentBlind(&M_LEVELSELECT);
+}
+
+static int32_t Menu_FindFirstLevelWithFilename(char const * const needle, int32_t * const volume, int32_t * const level)
+{
+    if (needle == nullptr || volume == nullptr || level == nullptr)
+        return 0;
+
+    for (int volumeIndex = 0; volumeIndex < g_volumeCnt; ++volumeIndex)
+    {
+        for (int levelIndex = 0; levelIndex < MAXLEVELS; ++levelIndex)
+        {
+            auto const &mapInfo = g_mapInfo[volumeIndex * MAXLEVELS + levelIndex];
+            if (mapInfo.filename != nullptr && Bstrstr(mapInfo.filename, needle) != nullptr)
+            {
+                *volume = volumeIndex;
+                *level = levelIndex;
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static void Menu_SelectFirstEpisodeOfCurrentContent(void)
+{
+    int32_t volume = 0;
+    int32_t level = 0;
+
+    switch (g_addonNum)
+    {
+    case ADDON_DUKEDC:
+        if (!Menu_FindFirstLevelWithFilename("DUKEDC1", &volume, &level))
+            volume = min<int32_t>(2, max<int32_t>(g_volumeCnt - 1, 0));
+        break;
+
+    case ADDON_NWINTER:
+        volume = min<int32_t>(1, max<int32_t>(g_volumeCnt - 1, 0));
+        level = 0;
+        break;
+
+    case ADDON_CARIBBEAN:
+        Menu_FindFirstLevelWithFilename("VACA1", &volume, &level);
+        break;
+
+    default:
+        break;
+    }
+
+    g_simplePendingVolume = volume;
+    g_simplePendingLevel = level;
+    Menu_PopulateSimpleLevelMenu(g_simplePendingVolume);
+
+    if (!g_developerMode && g_maxDefinedSkill == 0)
+    {
+        Menu_CommitPendingSimpleGameState();
+        Menu_StartGameWithoutSkill();
+    }
+}
+
+static void Menu_PlayFirstAvailableRelaunchMusic(void)
+{
+    for (int32_t i = 0; i < MUS_FIRST_SPECIAL; ++i)
+    {
+        if (g_mapInfo[i].musicfn == nullptr)
+            continue;
+
+        S_PlayLevelMusicOrNothing(i);
+        if (g_musicSize > 0)
+            return;
+    }
+}
+
+static void Menu_RestartMusicAfterAddonRelaunch(void)
+{
+    if (!ud.config.MusicToggle)
+        return;
+
+    if (g_player[myconnectindex].ps->gm & MODE_GAME)
+    {
+        if (g_musicSize == 0)
+            S_RestartMusic();
+    }
+    else if (g_mapInfo[MUS_INTRO].musicfn != nullptr)
+        S_PlaySpecialMusicOrNothing(MUS_INTRO);
+
+    if (g_musicSize == 0)
+        Menu_PlayFirstAvailableRelaunchMusic();
+
+    S_PauseMusic(false);
+}
+
+void Menu_ResumeNewGameAfterAddonRelaunch(int32_t const gameMode, int32_t const playerCount, int32_t const volumeNum,
+                                          int32_t const levelNum, int32_t const skillNum)
+{
+    int32_t const directStart = skillNum >= 0;
+    g_noLogo = directStart ? 1 : 0;
+    g_noLogoAnim = directStart ? 1 : 0;
+    g_forceSimpleGameModeDefault = false;
+    g_simplePendingGameMode = clamp(gameMode, MENU_SIMPLE_GAMEMODE_SINGLE, MENU_SIMPLE_GAMEMODE_DUKEMATCH);
+    g_simplePendingAddon = g_addonNum;
+    g_simplePendingLocalPlayerCount = Menu_ClampLocalPlayerCount(playerCount);
+    g_simplePendingVolume = volumeNum;
+    g_simplePendingLevel = levelNum;
+    g_forceCommitPendingSimpleGameState = true;
+
+    bool const showUserMap = Menu_GetPendingSimpleGameMode() != MENU_SIMPLE_GAMEMODE_DUKEMATCH;
+    Menu_UpdateEpisodeMenu(showUserMap);
+    M_EPISODE.currentEntry = Menu_GetActiveContentEntryIndex();
+
+    if (g_simplePendingVolume < 0 || g_simplePendingLevel < 0)
+        Menu_SelectFirstEpisodeOfCurrentContent();
+    else
+        Menu_PopulateSimpleLevelMenu(g_simplePendingVolume);
+
+    if (directStart)
+    {
+        g_player[myconnectindex].ps->gm &= ~MODE_MENU;
+        Menu_CommitPendingSimpleGameState();
+        Menu_StartConfiguredGame(clamp(skillNum, 0, max<int32_t>(g_maxDefinedSkill - 1, 0)), Menu_GetSkillSound(skillNum));
+        for (int playerNum = 0; playerNum < MAXPLAYERS; ++playerNum)
+            if (g_player[playerNum].ps != nullptr)
+                g_player[playerNum].ps->gm &= ~(MODE_MENU | MODE_TYPE);
+        ud.pause_on = 0;
+        ud.warp_on = 2;
+        I_ClearAllInput();
+        Menu_RestartMusicAfterAddonRelaunch();
+        return;
+    }
+
+    if (g_player[myconnectindex].ps->gm & MODE_GAME)
+    {
+        Menu_RestartMusicAfterAddonRelaunch();
+        return;
+    }
+
+    MenuID_t const nextMenu = Menu_GetPostEpisodeSimpleNewGameMenu();
+    if (nextMenu != MENU_NULL)
+    {
+        Menu_Open(myconnectindex);
+        Menu_Change(nextMenu);
+        Menu_RestartMusicAfterAddonRelaunch();
+    }
+}
+
+void M_UpdateDeveloperModeToggle(void)
+{
+    uint32_t const developerModeButtons = (1u << CONTROLLER_BUTTON_LEFTSTICK) | (1u << CONTROLLER_BUTTON_RIGHTSTICK);
+    int32_t comboHeld = KB_KeyPressed(sc_A) && KB_KeyPressed(sc_L);
+
+    int32_t const gamepadCount = joyGetConnectedGamepadCount();
+    for (int32_t gamepadIndex = 0; gamepadIndex < gamepadCount; ++gamepadIndex)
+    {
+        gamepadstate_t state {};
+        if (joyGetGamepadState(gamepadIndex, &state) == 0 && (state.buttons & developerModeButtons) == developerModeButtons)
+        {
+            comboHeld = 1;
+            break;
+        }
+    }
+
+    if (comboHeld && !g_developerModeToggleHeld)
+    {
+        g_developerMode = !g_developerMode;
+        MEO_EPISODE.linkID = Menu_GetPostEpisodeSimpleNewGameMenu();
+        S_PlaySound(g_developerMode ? PISTOL_BODYHIT : EXITMENUSOUND);
+        KB_ClearKeyDown(sc_A);
+        KB_ClearKeyDown(sc_L);
+    }
+
+    g_developerModeToggleHeld = comboHeld;
 }
 
 static int32_t Menu_GetSelectedSimpleLevel(void)
@@ -4377,6 +4976,54 @@ static void Menu_ApplySimpleGameMode(int32_t const mode)
     ud.weaponsharing = ud.m_weaponsharing;
 }
 
+static int32_t Menu_GetSkillSound(int32_t const skillIndex)
+{
+    switch (skillIndex)
+    {
+    case 0:
+        return JIBBED_ACTOR6;
+    case 1:
+        return BONUS_SPEECH1;
+    case 2:
+        return DUKE_GETWEAPON2;
+    case 3:
+        return JIBBED_ACTOR5;
+    default:
+        return PISTOL_BODYHIT;
+    }
+}
+
+static int32_t Menu_RelaunchPendingAddonNewGame(int32_t const skillIndex)
+{
+    int32_t const pendingAddon = Menu_GetPendingAddon();
+    if (pendingAddon == g_addonNum)
+        return 0;
+
+    char extraArgs[160];
+    Bsnprintf(extraArgs, sizeof(extraArgs), "-splitscreennewgame %d %d %d %d %d %d",
+              Menu_GetPendingSimpleGameMode(),
+              Menu_GetPendingLocalPlayerCount(),
+              ud.config.SplitScreenSeparateKeyboardMouse != 0,
+              max<int32_t>(g_simplePendingVolume, 0),
+              max<int32_t>(g_simplePendingLevel, 0),
+              skillIndex);
+
+    G_WriteSplitScreenRelaunchNewGameState(pendingAddon,
+                                           Menu_GetPendingSimpleGameMode(),
+                                           Menu_GetPendingLocalPlayerCount(),
+                                           ud.config.SplitScreenSeparateKeyboardMouse,
+                                           g_simplePendingVolume,
+                                           g_simplePendingLevel,
+                                           skillIndex);
+
+    if (Menu_RelaunchWithAddon(pendingAddon, extraArgs))
+        return 1;
+
+    Bstrcpy(apStrings[QUOTE_RESERVED4], "Could not restart DukeSplitScreen");
+    P_DoQuote(QUOTE_RESERVED4, g_player[myconnectindex].ps);
+    return 1;
+}
+
 static void Menu_StartConfiguredGame(int32_t const skillIndex, int32_t const skillSound)
 {
     ud.m_player_skill = skillIndex + 1;
@@ -4389,6 +5036,9 @@ static void Menu_StartConfiguredGame(int32_t const skillIndex, int32_t const ski
 
 static void Menu_StartGameWithoutSkill(void)
 {
+    if (Menu_RelaunchPendingAddonNewGame(M_SKILL.currentEntry))
+        return;
+
     Menu_StartConfiguredGame(M_SKILL.currentEntry, PISTOL_BODYHIT);
 }
 
@@ -4495,11 +5145,12 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
 
     if (entry == &ME_MAIN_QUITTOTITLE)
     {
+        g_noLogo = 0;
         g_noLogoAnim = 0;
         g_player[myconnectindex].ps->gm = MODE_DEMO;
         if (ud.recstat == 1)
             G_CloseDemoWrite();
-        artClearMapArt();
+        Menu_ResetTitleScreenTiles();
     }
 
     if (entry == &ME_MAIN_NEWGAME || entry == &ME_MAIN_NEWGAME_INGAME)
@@ -4514,32 +5165,69 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
         g_simplePendingGameMode = M_GAMEMODE.currentEntry;
         g_simplePendingVolume = 0;
         g_simplePendingLevel = 0;
-
-        if (g_simplePendingGameMode == MENU_SIMPLE_GAMEMODE_SINGLE && g_maxDefinedSkill == 0)
-        {
-            Menu_CommitPendingSimpleGameState();
-            Menu_StartGameWithoutSkill();
-        }
         break;
 
     case MENU_PLAYERCOUNT:
         g_simplePendingLocalPlayerCount = M_PLAYERCOUNT.currentEntry + 2;
-
-        if (Menu_GetPendingSimpleGameMode() == MENU_SIMPLE_GAMEMODE_COOPERATIVE && g_maxDefinedSkill == 0)
-        {
-            Menu_CommitPendingSimpleGameState();
-            Menu_StartGameWithoutSkill();
-        }
         break;
 
     case MENU_EPISODE:
+    {
+        if (entry == &ME_EPISODE_BASEGAME)
+        {
+            g_simplePendingAddon = ADDON_NONE;
+
+            if (g_addonNum == ADDON_NONE)
+            {
+                Menu_SelectFirstEpisodeOfCurrentContent();
+            }
+            else
+            {
+                g_simplePendingVolume = -1;
+                g_simplePendingLevel = -1;
+            }
+            break;
+        }
+
         if (entry != &ME_EPISODE_USERMAP)
         {
             g_simplePendingVolume = M_EPISODE.currentEntry;
             g_simplePendingLevel = 0;
             Menu_PopulateSimpleLevelMenu(g_simplePendingVolume);
+
+            if (!g_developerMode && g_maxDefinedSkill == 0)
+            {
+                Menu_CommitPendingSimpleGameState();
+                Menu_StartGameWithoutSkill();
+            }
         }
         break;
+    }
+
+    case MENU_EXTRACONTENT:
+    {
+        int32_t const addonIndex = Menu_GetAddonEpisodeIndex(entry);
+        if (addonIndex < 0)
+            break;
+
+        if (!g_addonEpisodeAvailable[addonIndex])
+        {
+            Menu_SetAddonEpisodeMessage(addonIndex);
+            break;
+        }
+
+        g_simplePendingAddon = Menu_AddonEpisodes[addonIndex].addonNum;
+
+        if (g_addonNum != Menu_AddonEpisodes[addonIndex].addonNum)
+        {
+            g_simplePendingVolume = -1;
+            g_simplePendingLevel = -1;
+            break;
+        }
+
+        Menu_SelectFirstEpisodeOfCurrentContent();
+        break;
+    }
 
     case MENU_LEVELSELECT:
         g_simplePendingLevel = Menu_GetSelectedSimpleLevel();
@@ -4571,25 +5259,12 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
 
     case MENU_SKILL:
     {
-        int32_t skillsound = PISTOL_BODYHIT;
+        int32_t const skillsound = Menu_GetSkillSound(M_SKILL.currentEntry);
 
-        switch (M_SKILL.currentEntry)
-        {
-        case 0:
-            skillsound = JIBBED_ACTOR6;
+        if (Menu_RelaunchPendingAddonNewGame(M_SKILL.currentEntry))
             break;
-        case 1:
-            skillsound = BONUS_SPEECH1;
-            break;
-        case 2:
-            skillsound = DUKE_GETWEAPON2;
-            break;
-        case 3:
-            skillsound = JIBBED_ACTOR5;
-            break;
-        }
 
-        if (Menu_HaveSimpleNewGameFlow(g_previousMenu) || g_previousMenu == MENU_USERMAP)
+        if (g_forceCommitPendingSimpleGameState || Menu_HaveSimpleNewGameFlow(g_previousMenu) || g_previousMenu == MENU_USERMAP)
             Menu_CommitPendingSimpleGameState();
 
         Menu_StartConfiguredGame(M_SKILL.currentEntry, skillsound);
@@ -4784,6 +5459,21 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
         }
     }
 }
+
+#if !defined EDUKE32_TOUCH_DEVICES
+static int32_t Menu_HasGamepadButtonActivity(void)
+{
+    int32_t const gamepadCount = joyGetConnectedGamepadCount();
+    for (int32_t gamepadIndex = 0; gamepadIndex < gamepadCount; ++gamepadIndex)
+    {
+        gamepadstate_t state {};
+        if (joyGetGamepadState(gamepadIndex, &state) == 0 && state.connected && state.buttons != 0)
+            return 1;
+    }
+
+    return 0;
+}
+#endif
 
 static int32_t Menu_EntryOptionModify(MenuEntry_t *entry, int32_t newOption)
 {
@@ -5327,6 +6017,24 @@ static void Menu_Verify(int32_t input)
             KB_ClearKeysDown();
             FX_StopAllSounds();
 
+            if (g_quickload != nullptr && g_quickload->isValid())
+            {
+                int32_t const requiredAddon = Menu_GetAddonForSave(*g_quickload);
+                if (requiredAddon != g_addonNum)
+                {
+                    char extraArgs[BMAX_PATH + 64];
+                    Bsnprintf(extraArgs, sizeof(extraArgs), "-splitscreenload \"%s\"", g_quickload->path);
+                    G_WriteSplitScreenRelaunchLoadState(requiredAddon, g_quickload->path, ud.config.SplitScreenSeparateKeyboardMouse);
+                    if (Menu_RelaunchWithAddon(requiredAddon, extraArgs))
+                        break;
+
+                    G_ClearSplitScreenRelaunchState();
+                    Bstrcpy(apStrings[QUOTE_RESERVED4], "Could not restart DukeSplitScreen");
+                    P_DoQuote(QUOTE_RESERVED4, g_player[myconnectindex].ps);
+                    break;
+                }
+            }
+
             if (G_LoadPlayerMaybeMulti(*g_quickload) == 0)
                 break;
 
@@ -5366,6 +6074,21 @@ static void Menu_Verify(int32_t input)
 
             KB_FlushKeyboardQueue();
             KB_ClearKeysDown();
+
+            int32_t const requiredAddon = Menu_GetAddonForSave(sv);
+            if (requiredAddon != g_addonNum)
+            {
+                char extraArgs[BMAX_PATH + 64];
+                Bsnprintf(extraArgs, sizeof(extraArgs), "-splitscreenload \"%s\"", sv.path);
+                G_WriteSplitScreenRelaunchLoadState(requiredAddon, sv.path, ud.config.SplitScreenSeparateKeyboardMouse);
+                if (Menu_RelaunchWithAddon(requiredAddon, extraArgs))
+                    break;
+
+                G_ClearSplitScreenRelaunchState();
+                Bstrcpy(apStrings[QUOTE_RESERVED4], "Could not restart DukeSplitScreen");
+                P_DoQuote(QUOTE_RESERVED4, g_player[myconnectindex].ps);
+                break;
+            }
 
             if (G_LoadPlayerMaybeMulti(sv))
                 Menu_Change(MENU_PREVIOUS);
@@ -5469,11 +6192,12 @@ static void Menu_Verify(int32_t input)
     case MENU_QUITTOTITLE:
         if (input)
         {
+            g_noLogo = 0;
             g_noLogoAnim = 0;
             g_player[myconnectindex].ps->gm = MODE_DEMO;
             if (ud.recstat == 1)
                 G_CloseDemoWrite();
-            artClearMapArt();
+            Menu_ResetTitleScreenTiles();
         }
         break;
 
@@ -6115,7 +6839,7 @@ static void Menu_ChangingTo(Menu_t * m)
             g_forceSimpleGameModeDefault = false;
         }
 
-        MEO_GAMEMODE_SINGLE.linkID = g_maxDefinedSkill == 0 ? MENU_NULL : MENU_SKILL;
+        MEO_GAMEMODE_SINGLE.linkID = MENU_EPISODE;
         MEO_GAMEMODE_COOPERATIVE.linkID = MENU_PLAYERCOUNT;
         MEO_GAMEMODE_DUKEMATCH.linkID = MENU_PLAYERCOUNT;
         ((MenuMenu_t *)m->object)->currentEntry = Menu_GetPendingSimpleGameMode();
@@ -6123,12 +6847,9 @@ static void Menu_ChangingTo(Menu_t * m)
 
     case MENU_PLAYERCOUNT:
     {
-        MenuID_t const nextMenu = Menu_GetPendingSimpleGameMode() == MENU_SIMPLE_GAMEMODE_DUKEMATCH ? MENU_EPISODE
-                                 : (g_maxDefinedSkill == 0 ? MENU_NULL : MENU_SKILL);
-
-        MEO_PLAYERCOUNT_2.linkID = nextMenu;
-        MEO_PLAYERCOUNT_3.linkID = nextMenu;
-        MEO_PLAYERCOUNT_4.linkID = nextMenu;
+        MEO_PLAYERCOUNT_2.linkID = MENU_EPISODE;
+        MEO_PLAYERCOUNT_3.linkID = MENU_EPISODE;
+        MEO_PLAYERCOUNT_4.linkID = MENU_EPISODE;
         M_PLAYERCOUNT.currentEntry = Menu_GetPendingLocalPlayerCount() - 2;
         m->parentID = MENU_GAMEMODE;
         break;
@@ -6137,21 +6858,50 @@ static void Menu_ChangingTo(Menu_t * m)
     case MENU_EPISODE:
     {
         bool const showUserMap = Menu_GetPendingSimpleGameMode() != MENU_SIMPLE_GAMEMODE_DUKEMATCH;
-        MenuEntry_HideOnCondition(&ME_EPISODE_USERMAP, !showUserMap);
-        M_EPISODE.numEntries = g_volumeCnt + (showUserMap ? 2 : 0);
-        Menu_SetEpisodeStyleOffset(g_volumeCnt + (Menu_GetPendingSimpleGameMode() == MENU_SIMPLE_GAMEMODE_DUKEMATCH ? 0 : 1));
+        Menu_UpdateEpisodeMenu(showUserMap);
         if (g_previousMenu == MENU_GAMEMODE || g_previousMenu == MENU_PLAYERCOUNT)
             m->parentID = g_previousMenu;
         else
             m->parentID = MENU_MAIN;
 
-        M_EPISODE.currentEntry = clamp(g_simplePendingVolume, 0, max(g_volumeCnt - 1, 0));
+        M_EPISODE.currentEntry = g_addonNum != ADDON_NONE
+            ? Menu_GetActiveContentEntryIndex()
+            : (g_developerMode ? clamp(g_simplePendingVolume, 0, max(g_volumeCnt - 1, 0)) : 0);
+        break;
+    }
+
+    case MENU_EXTRACONTENT:
+    {
+        Menu_PrepareAddonEpisodeEntries();
+        M_EXTRACONTENT.numEntries = MENU_ADDON_EPISODE_COUNT;
+        M_EXTRACONTENT.currentEntry = 0;
+        MMF_Top_ExtraContent.pos.y = 68 << 16;
+
+        for (int32_t i = 0; i < MENU_ADDON_EPISODE_COUNT; ++i)
+        {
+            if (g_addonNum == Menu_AddonEpisodes[i].addonNum)
+            {
+                M_EXTRACONTENT.currentEntry = i;
+                break;
+            }
+        }
+
+        m->parentID = MENU_EPISODE;
         break;
     }
 
     case MENU_LEVELSELECT:
         m->parentID = MENU_EPISODE;
+        MEO_LEVEL.linkID = g_maxDefinedSkill == 0 ? MENU_NULL : MENU_SKILL;
         Menu_PopulateSimpleLevelMenu(g_simplePendingVolume >= 0 ? g_simplePendingVolume : M_EPISODE.currentEntry);
+        break;
+
+    case MENU_SKILL:
+        Menu_RefreshSkillMenuNames();
+        break;
+
+    case MENU_ADDONMESSAGE:
+        m->parentID = g_previousMenu == MENU_EXTRACONTENT ? MENU_EXTRACONTENT : MENU_EPISODE;
         break;
 
     case MENU_USERMAP:
@@ -9048,6 +9798,7 @@ void M_DisplayMenus(void)
     if (mousestatus && g_mouseClickState == MOUSE_PRESSED)
         m_mousedownpos = m_mousepos;
 
+    M_UpdateDeveloperModeToggle();
     Menu_RunInput(m_currentMenu);
 
     g_player[myconnectindex].ps->gm &= (0xff-MODE_TYPE);
@@ -9141,7 +9892,7 @@ void M_DisplayMenus(void)
         Menu_Run(m_currentMenu, origin);
 
 #if !defined EDUKE32_TOUCH_DEVICES
-    if (m_menuchange_watchpoint >= 3)
+    if (m_menuchange_watchpoint >= 3 && timerGetTicks() >= m_animation.start + m_animation.length)
         m_menuchange_watchpoint = 0;
 #endif
 
@@ -9220,6 +9971,12 @@ void M_DisplayMenus(void)
     }
 
 #ifndef EDUKE32_TOUCH_DEVICES
+    if (g_mouseClickState == MOUSE_IDLE && Menu_HasGamepadButtonActivity())
+    {
+        m_mouselastactivity = -M_MOUSETIMEOUT;
+        m_mousewake_watchpoint = 0;
+    }
+
     // Display the mouse cursor, except on touch devices.
     if (MOUSEACTIVECONDITION)
     {

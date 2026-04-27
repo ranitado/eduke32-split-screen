@@ -38,4 +38,18 @@ extern const char *CommandMap;
 extern const char *CommandName;
 extern int32_t g_forceWeaponChoice;
 extern int32_t g_fakeMultiMode;
+extern int32_t g_splitScreenResumeNewGame;
+extern int32_t g_splitScreenResumeGameMode;
+extern int32_t g_splitScreenResumePlayerCount;
+extern int32_t g_splitScreenResumeSeparateKeyboardMouse;
+extern int32_t g_splitScreenResumeVolume;
+extern int32_t g_splitScreenResumeLevel;
+extern int32_t g_splitScreenResumeSkill;
+extern char g_splitScreenResumeLoadPath[BMAX_PATH];
+
+extern void G_WriteSplitScreenRelaunchNewGameState(int32_t addonNum, int32_t gameMode, int32_t playerCount, int32_t separateKeyboardMouse,
+                                                   int32_t volumeNum, int32_t levelNum, int32_t skillNum);
+extern void G_WriteSplitScreenRelaunchLoadState(int32_t addonNum, char const *path, int32_t separateKeyboardMouse);
+extern void G_ReadSplitScreenRelaunchState(void);
+extern void G_ClearSplitScreenRelaunchState(void);
 #endif // cmdline_h__

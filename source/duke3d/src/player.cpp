@@ -3396,7 +3396,7 @@ void P_GetInput(int const playerNum)
     auto      &thisPlayer = g_player[playerNum];
     auto const pPlayer    = thisPlayer.ps;
     ControlInfo info;
-    bool const suppressJoystickForSplitScreen = G_HaveSplitScreen();
+    bool const suppressJoystickForSplitScreen = G_HaveSplitScreen() || ud.config.SplitScreenSeparateKeyboardMouse;
 
     if (g_cheatBufLen > 1 || (pPlayer->gm & (MODE_MENU|MODE_TYPE)) || (ud.pause_on && !KB_KeyPressed(sc_Pause)))
     {

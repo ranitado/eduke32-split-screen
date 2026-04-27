@@ -31,6 +31,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "demo.h"
 #include "duke3d.h"
 #include "input.h"
+#include "menus.h"
 #include "mdsprite.h"
 #include "microprofile.h"
 #include "sbar.h"
@@ -61,7 +62,7 @@ void G_QuitIfStartupEscapePressed(void)
 
 static void G_DrawStartupVersionText(void)
 {
-    minitext(1, 193, "V0.3", 0, 2 + 8 + 16 + 128);
+    minitext(1, 193, "V0.4", 0, 2 + 8 + 16 + 128);
 }
 
 ////////// OFTEN-USED FEW-LINERS //////////
@@ -373,7 +374,7 @@ static void G_DrawSplitScreenQuote(int32_t const playerNum, splitscreen_viewport
 
 static void G_DrawSplitScreenTintOverlay(int32_t const playerNum, splitscreen_viewport_t const &viewport)
 {
-    if (!ud.screenfade || viewport.width <= 0 || viewport.height <= 0)
+    if (viewport.width <= 0 || viewport.height <= 0)
         return;
 
     auto const pPlayer = g_player[playerNum].ps;
@@ -381,10 +382,20 @@ static void G_DrawSplitScreenTintOverlay(int32_t const playerNum, splitscreen_vi
         return;
 
     palaccum_t tint = PALACCUM_INITIALIZER;
+    static const palette_t waterpal = { 4, 18, 63, 0 };
+    static const palette_t slimepal = { 30, 63, 18, 0 };
     static const palette_t loogiepal = { 0, 63, 0, 0 };
 
-    palaccum_add(&tint, &pPlayer->pals, pPlayer->pals.f);
-    palaccum_add(&tint, &loogiepal, pPlayer->loogcnt >> 1);
+    if (pPlayer->palette == WATERPAL)
+        palaccum_add(&tint, &waterpal, 18);
+    else if (pPlayer->palette == SLIMEPAL)
+        palaccum_add(&tint, &slimepal, 18);
+
+    if (ud.screenfade)
+    {
+        palaccum_add(&tint, &pPlayer->pals, pPlayer->pals.f);
+        palaccum_add(&tint, &loogiepal, pPlayer->loogcnt >> 1);
+    }
 
     if (tint.maxf <= 0 || tint.sumf <= 0)
         return;
@@ -447,11 +458,34 @@ static int32_t G_ScaleSplitScreenHudCoord(int32_t const origin, int32_t const co
     return (origin << 16) + mulscale16(coord << 16, scale);
 }
 
+static int32_t G_ScaleSplitScreenHudY(splitscreen_viewport_t const &viewport, int32_t const coord, int32_t const scale)
+{
+    return ((viewport.y + viewport.height) << 16) - mulscale16((200 - coord) << 16, scale);
+}
+
+static int32_t G_ScaleSplitScreenHudRight(splitscreen_viewport_t const &viewport, int32_t const fromRight, int32_t const scale)
+{
+    return ((viewport.x + viewport.width) << 16) - mulscale16(fromRight << 16, scale);
+}
+
+static int32_t G_ScaleSplitScreenHudRightSprite(splitscreen_viewport_t const &viewport, int32_t const fromRight,
+                                                int32_t const layoutScale, int32_t const spriteScale, int32_t const picnum)
+{
+    int32_t x = G_ScaleSplitScreenHudRight(viewport, fromRight, layoutScale);
+
+    if ((unsigned)picnum < MAXTILES)
+        x -= mulscale16(tilesiz[picnum].x << 16, spriteScale);
+
+    return x;
+}
+
 static int32_t G_GetSplitScreenMiniHudScale(splitscreen_viewport_t const &viewport)
 {
     int32_t scale = min<int32_t>(divscale16(viewport.width, 320), divscale16(viewport.height, 200));
 
-    if (G_GetSplitScreenPlayerCount() == 3 && viewport.x == 0 && viewport.width == xdim)
+    if (!G_HaveSplitScreen())
+        scale = ::scale(scale, 3, 4);
+    else if (viewport.x == 0 && viewport.width == xdim && viewport.height < ydim)
         scale = ::scale(scale, 4, 3);
 
     return scale;
@@ -472,6 +506,62 @@ static void G_DrawSplitScreenHudNumber(int32_t const x, int32_t const y, int32_t
                  TEXT_XCENTER | TEXT_DIGITALNUMBER, x1, y1, clipX2, y2);
 }
 
+static void G_DrawSplitScreenHudMiniText(splitscreen_viewport_t const &viewport, int32_t const x, int32_t const y,
+                                         char const * const text, int32_t const pal, int32_t const clipX1,
+                                         int32_t const clipY1, int32_t const clipX2, int32_t const clipY2,
+                                         int32_t const scale)
+{
+    if (text == nullptr || text[0] == '\0')
+        return;
+
+    G_ScreenText(MF_Minifont.tilenum,
+                 G_ScaleSplitScreenHudCoord(viewport.x, x, scale),
+                 G_ScaleSplitScreenHudY(viewport, y, scale),
+                 mulscale16(MF_Minifont.zoom, scale), 0, 0, text, 0, pal,
+                 RS_TOPLEFT | ROTATESPRITE_FULL16, 0,
+                 MF_Minifont.emptychar.x, MF_Minifont.emptychar.y,
+                 MF_Minifont.between.x, MF_Minifont.between.y,
+                 MF_Minifont.textflags, clipX1, clipY1, clipX2, clipY2);
+}
+
+static int32_t G_GetSplitScreenInvAmount(DukePlayer_t const * const pPlayer)
+{
+    switch (pPlayer->inven_icon)
+    {
+    case ICON_FIRSTAID:
+        return pPlayer->inv_amount[GET_FIRSTAID];
+    case ICON_STEROIDS:
+        return (pPlayer->inv_amount[GET_STEROIDS] + 3) >> 2;
+    case ICON_HOLODUKE:
+        return (pPlayer->inv_amount[GET_HOLODUKE] + 15) / 24;
+    case ICON_JETPACK:
+        return (pPlayer->inv_amount[GET_JETPACK] + 15) >> 4;
+    case ICON_HEATS:
+        return pPlayer->inv_amount[GET_HEATS] / 12;
+    case ICON_SCUBA:
+        return (pPlayer->inv_amount[GET_SCUBA] + 63) >> 6;
+    case ICON_BOOTS:
+        return pPlayer->inv_amount[GET_BOOTS] >> 1;
+    default:
+        return -1;
+    }
+}
+
+static int32_t G_GetSplitScreenInvOn(DukePlayer_t const * const pPlayer)
+{
+    switch (pPlayer->inven_icon)
+    {
+    case ICON_HOLODUKE:
+        return pPlayer->holoduke_on;
+    case ICON_JETPACK:
+        return pPlayer->jetpack_on;
+    case ICON_HEATS:
+        return pPlayer->heat_on;
+    default:
+        return 0x80000000;
+    }
+}
+
 static void G_DrawSplitScreenMiniHud(int32_t const playerNum, splitscreen_viewport_t const &viewport)
 {
     auto const pPlayer = g_player[playerNum].ps;
@@ -487,7 +577,7 @@ static void G_DrawSplitScreenMiniHud(int32_t const playerNum, splitscreen_viewpo
         return;
 
     int32_t const hudScale = G_GetSplitScreenMiniHudScale(viewport);
-    int32_t const baseY = ((viewport.y + viewport.height) << 16) - mulscale16(28 << 16, hudScale);
+    int32_t const baseY = G_ScaleSplitScreenHudY(viewport, 172, hudScale);
 
     int const health = (sprite[pPlayer->i].pal == 1 && pPlayer->last_extra < 2) ? 1 : pPlayer->last_extra;
     int ammoWeapon = PWEAPON(playerNum, pPlayer->curr_weapon, WorksLike) == HANDREMOTE_WEAPON ? HANDBOMB_WEAPON : pPlayer->curr_weapon;
@@ -498,13 +588,62 @@ static void G_DrawSplitScreenMiniHud(int32_t const playerNum, splitscreen_viewpo
     int32_t const textNudgeX = -mulscale16(2 << 16, hudScale);
     int32_t const healthTextX = G_ScaleSplitScreenHudCoord(viewport.x, 20, hudScale) + textNudgeX;
     int32_t const ammoTextX = G_ScaleSplitScreenHudCoord(viewport.x, 53, hudScale) + textNudgeX;
-    int32_t const textY = ((viewport.y + viewport.height) << 16) - mulscale16(17 << 16, hudScale);
+    int32_t const textY = G_ScaleSplitScreenHudY(viewport, 183, hudScale);
 
     rotatesprite(healthBoxX, baseY, hudScale, 0, HEALTHBOX, 0, 21, RS_TOPLEFT, x1, y1, x2, y2);
     G_DrawSplitScreenHudNumber(healthTextX, textY, health, -16, 0, x1, y1, x2, y2, hudScale);
 
     rotatesprite(ammoBoxX, baseY, hudScale, 0, AMMOBOX, 0, 21, RS_TOPLEFT, x1, y1, x2, y2);
     G_DrawSplitScreenHudNumber(ammoTextX, textY, pPlayer->ammo_amount[ammoWeapon], -16, 0, x1, y1, x2, y2, hudScale);
+
+    if (pPlayer->inven_icon)
+    {
+        static int32_t itemIcons[ICON_MAX] = { -1, FIRSTAID_ICON, STEROIDS_ICON, HOLODUKE_ICON,
+            JETPACK_ICON, HEAT_ICON, AIRTANK_ICON, BOOT_ICON };
+
+        int32_t const inventoryBoxX = G_ScaleSplitScreenHudCoord(viewport.x, 69, hudScale);
+        int32_t const inventoryIconX = G_ScaleSplitScreenHudCoord(viewport.x, 73, hudScale);
+        int32_t const inventoryIconY = G_ScaleSplitScreenHudY(viewport, 179, hudScale);
+        int32_t const inventoryAmountX = G_ScaleSplitScreenHudCoord(viewport.x, 96, hudScale) + textNudgeX;
+        int32_t const inventoryAmountY = G_ScaleSplitScreenHudY(viewport, 188, hudScale);
+        int32_t const itemTile = ((unsigned)pPlayer->inven_icon < ICON_MAX) ? itemIcons[pPlayer->inven_icon] : -1;
+
+        rotatesprite(inventoryBoxX, G_ScaleSplitScreenHudY(viewport, 170, hudScale), hudScale, 0, INVENTORYBOX, 0, 21, RS_TOPLEFT, x1, y1, x2, y2);
+
+        if (itemTile >= 0)
+            rotatesprite(inventoryIconX, inventoryIconY, hudScale, 0, itemTile, 0, 0, RS_TOPLEFT, x1, y1, x2, y2);
+
+        int32_t const invAmount = G_GetSplitScreenInvAmount(pPlayer);
+        if (invAmount >= 0)
+        {
+            G_DrawSplitScreenHudNumber(inventoryAmountX, inventoryAmountY, invAmount, -16, 0, x1, y1, x2, y2, mulscale16(45056, hudScale));
+        }
+
+        int32_t const invOn = G_GetSplitScreenInvOn(pPlayer);
+        if (pPlayer->inven_icon >= ICON_SCUBA)
+            G_DrawSplitScreenHudMiniText(viewport, 86, 179, "Auto", 2, x1, y1, x2, y2, hudScale);
+        else if (invOn > 0)
+            G_DrawSplitScreenHudMiniText(viewport, 92, 179, "On", 0, x1, y1, x2, y2, hudScale);
+        else if ((uint32_t)invOn != 0x80000000)
+            G_DrawSplitScreenHudMiniText(viewport, 89, 179, "Off", 2, x1, y1, x2, y2, hudScale);
+    }
+
+    int32_t const accessScale = mulscale16(32768, hudScale);
+    int32_t const accessSpacing = mulscale16(14 << 16, hudScale);
+    int32_t accessX = G_ScaleSplitScreenHudRightSprite(viewport, 10, hudScale, accessScale, ACCESSCARD);
+
+    if (pPlayer->got_access & 2)
+    {
+        rotatesprite(accessX, G_ScaleSplitScreenHudY(viewport, 180, hudScale), accessScale, 0, ACCESSCARD, 0, 21, RS_TOPLEFT, x1, y1, x2, y2);
+        accessX -= accessSpacing;
+    }
+    if (pPlayer->got_access & 4)
+    {
+        rotatesprite(accessX, G_ScaleSplitScreenHudY(viewport, 176, hudScale), accessScale, 0, ACCESSCARD, 0, 23, RS_TOPLEFT, x1, y1, x2, y2);
+        accessX -= accessSpacing;
+    }
+    if (pPlayer->got_access & 1)
+        rotatesprite(accessX, G_ScaleSplitScreenHudY(viewport, 180, hudScale), accessScale, 0, ACCESSCARD, 0, 0, RS_TOPLEFT, x1, y1, x2, y2);
 }
 
 static void G_DrawSplitScreenOverlayForPlayer(int32_t const playerNum)
@@ -552,7 +691,7 @@ static void G_DrawSplitScreenOverlayForPlayer(int32_t const playerNum)
 
     if (VM_OnEvent(EVENT_DISPLAYSBAR, pPlayer->i, playerNum) == 0)
     {
-        if (splitPlayerCount >= 3)
+        if (ud.config.SplitScreenHudStyle == HUD_STYLE_SPLITSCREEN)
             G_DrawSplitScreenMiniHud(playerNum, viewport);
         else
             G_DrawStatusBar(playerNum);
@@ -1181,7 +1320,14 @@ void G_DisplayRest(int32_t smoothratio)
     {
         polytint_t & fstint = hictinting[MAXPALOOKUPS-1];
 
-        if (pp->palette == WATERPAL)
+        if (haveSplitScreen)
+        {
+            fstint.r = 255;
+            fstint.g = 255;
+            fstint.b = 255;
+            fstint.f = 0;
+        }
+        else if (pp->palette == WATERPAL)
         {
             fstint.r = 224;
             fstint.g = 192;
@@ -1238,7 +1384,10 @@ void G_DisplayRest(int32_t smoothratio)
 #endif
 
             // g_restorePalette < 0: reset tinting, too (e.g. when loading new game)
-            P_SetGamePalette(pp, pal, 2 + (g_restorePalette>0)*16);
+            if (haveSplitScreen)
+                videoSetPalette(ud.brightness>>2, BASEPAL, 2 + (g_restorePalette>0)*16);
+            else
+                P_SetGamePalette(pp, pal, 2 + (g_restorePalette>0)*16);
 
 #ifdef SPLITSCREEN_MOD_HACKS
             if (pp2)  // keep first player's pal as its member!
@@ -1405,7 +1554,15 @@ void G_DisplayRest(int32_t smoothratio)
         if (pp->invdisptime > 0) G_DrawInventory(pp);
 
         if (VM_OnEvent(EVENT_DISPLAYSBAR, g_player[screenpeek].ps->i, screenpeek) == 0)
-            G_DrawStatusBar(screenpeek);
+        {
+            if (ud.config.SplitScreenHudStyle == HUD_STYLE_SPLITSCREEN)
+            {
+                splitscreen_viewport_t const viewport = { 0, 0, xdim, ydim };
+                G_DrawSplitScreenMiniHud(screenpeek, viewport);
+            }
+            else
+                G_DrawStatusBar(screenpeek);
+        }
 
         G_PrintGameQuotes(screenpeek);
 
@@ -1961,6 +2118,7 @@ void G_DisplayLogo(void)
     g_startupEscapeExitsGame = 1;
 
     I_ClearAllInput();
+    m_mouselastactivity = -M_MOUSETIMEOUT;
 
     videoSetViewableArea(0, 0, xdim-1, ydim-1);
     videoClearScreen(0L);
@@ -2647,6 +2805,11 @@ static int32_t G_GetBonusMaxSecretRooms(void)
     return maxSecretRooms;
 }
 
+static void G_DrawBonusTableNumberRight(int32_t const x, int32_t const y, char const * const text, int32_t const pal)
+{
+    gametext_((x)<<16, (y)<<16, text, 0, pal, 0, 0, TEXT_XRIGHT|TEXT_CONSTWIDTHNUMS);
+}
+
 void G_BonusScreen(int32_t bonusonly)
 {
     int32_t bonusscreen_tiles[5];
@@ -2914,52 +3077,8 @@ void G_BonusScreen(int32_t bonusonly)
                 {
                     int32_t const bonusPlayerCount = G_GetBonusPlayerCount();
                     int32_t const showSplitPlayerStats = G_HaveSplitScreen() && bonusPlayerCount > 1;
-                    int32_t const leftLabelX = 10;
-                    int32_t const leftPlayerX = 20;
-                    int32_t const leftValueX = 142;
-                    int32_t const rightLabelX = 170;
-                    int32_t const rightPlayerX = 180;
-                    int32_t const rightValueX = 300;
                     int32_t enemyY = yy;
                     int32_t secretY = yy;
-
-                    gametext(leftLabelX, enemyY+9, "Enemies Killed:");
-                    enemyY += 10;
-
-                    if (showSplitPlayerStats)
-                    {
-                        for (int32_t playerIndex = 0; playerIndex < bonusPlayerCount; ++playerIndex)
-                        {
-                            Bsprintf(tempbuf, "P%d:", G_GetBonusPlayer(playerIndex) + 1);
-                            gametext(leftPlayerX, enemyY+9, tempbuf);
-                            enemyY += 10;
-                        }
-                    }
-
-                    gametext(leftLabelX, enemyY+9, "Enemies Left:");
-                    enemyY += 10;
-
-                    if (totalclock > (60*9))
-                    {
-                        gametext(rightLabelX, secretY+9, "Secrets Found:");
-                        secretY += 10;
-
-                        if (showSplitPlayerStats)
-                        {
-                            for (int32_t playerIndex = 0; playerIndex < bonusPlayerCount; ++playerIndex)
-                            {
-                                Bsprintf(tempbuf, "P%d:", G_GetBonusPlayer(playerIndex) + 1);
-                                gametext(rightPlayerX, secretY+9, tempbuf);
-                                secretY += 10;
-                            }
-                        }
-
-                        gametext(rightLabelX, secretY+9, "Secrets Missed:");
-                        secretY += 10;
-
-                        if (bonuscnt == 4)
-                            bonuscnt++;
-                    }
 
                     if (bonuscnt == 2)
                     {
@@ -2967,93 +3086,180 @@ void G_BonusScreen(int32_t bonusonly)
                         S_PlaySound(FLY_BY);
                     }
 
-                    if (totalclock > (60*7))
+                    if (showSplitPlayerStats)
                     {
-                        if (bonuscnt == 3)
-                        {
-                            bonuscnt++;
-                            S_PlaySound(PIPEBOMB_EXPLODE);
-                        }
-
-                        enemyY = zz;
+                        int32_t const labelX = 12;
+                        int32_t const colStep = bonusPlayerCount >= 4 ? 38 : 48;
+                        int32_t const colStart = bonusPlayerCount >= 4 ? 152 : 160;
+                        int32_t const rowHeaderY = zz + 9;
+                        int32_t const rowKillsY = rowHeaderY + 14;
+                        int32_t const rowDeathsY = rowKillsY + 10;
+                        int32_t const rowSecretsY = rowDeathsY + 10;
+                        int32_t const rowEnemiesLeftY = rowSecretsY + 15;
+                        int32_t const rowSecretsLeftY = rowEnemiesLeftY + 10;
+                        int32_t kills[MAXPLAYERS] = {};
+                        int32_t deaths[MAXPLAYERS] = {};
+                        int32_t secrets[MAXPLAYERS] = {};
+                        int32_t bestKills = 0;
+                        int32_t mostDeaths = 0;
+                        int32_t bestSecrets = 0;
 
                         if (showSplitPlayerStats)
                         {
-                            enemyY += 10;
+                            for (int32_t playerIndex = 0; playerIndex < bonusPlayerCount; ++playerIndex)
+                            {
+                                int32_t const playerNum = G_GetBonusPlayer(playerIndex);
+                                DukePlayer_t const * const pPlayer = g_player[playerNum].ps;
+
+                                kills[playerIndex] = pPlayer != nullptr ? pPlayer->actors_killed : 0;
+                                deaths[playerIndex] = pPlayer != nullptr ? pPlayer->fraggedself : 0;
+                                secrets[playerIndex] = pPlayer != nullptr ? pPlayer->secret_rooms : 0;
+                                bestKills = max<int32_t>(bestKills, kills[playerIndex]);
+                                mostDeaths = max<int32_t>(mostDeaths, deaths[playerIndex]);
+                                bestSecrets = max<int32_t>(bestSecrets, secrets[playerIndex]);
+
+                                Bsprintf(tempbuf, "P%d", G_GetBonusPlayer(playerIndex) + 1);
+                                gametext(colStart + playerIndex*colStep + 1, rowHeaderY, tempbuf);
+                            }
+                        }
+
+                        gametext(labelX, rowKillsY, "Enemies Killed");
+                        gametext(labelX, rowDeathsY, "Deaths");
+                        gametext(labelX, rowSecretsY, "Secrets Found");
+
+                        if (totalclock > (60*7))
+                        {
+                            if (bonuscnt == 3)
+                            {
+                                bonuscnt++;
+                                S_PlaySound(PIPEBOMB_EXPLODE);
+                            }
 
                             for (int32_t playerIndex = 0; playerIndex < bonusPlayerCount; ++playerIndex)
                             {
-                                DukePlayer_t const * const pPlayer = g_player[G_GetBonusPlayer(playerIndex)].ps;
+                                int32_t const valueX = colStart + playerIndex*colStep + 15;
 
-                                Bsprintf(tempbuf, "%-3d", pPlayer != nullptr ? pPlayer->actors_killed : 0);
+                                Bsprintf(tempbuf, "%d", kills[playerIndex]);
+                                if (bestKills > 0 && kills[playerIndex] == bestKills)
+                                    G_DrawBonusTableNumberRight(valueX, rowKillsY, tempbuf, 11);
+                                else
+                                    G_DrawBonusTableNumberRight(valueX, rowKillsY, tempbuf, MF_Bluefont.pal);
+
+                                Bsprintf(tempbuf, "%d", deaths[playerIndex]);
+                                if (mostDeaths > 0 && deaths[playerIndex] == mostDeaths)
+                                    G_DrawBonusTableNumberRight(valueX, rowDeathsY, tempbuf, 2);
+                                else
+                                    G_DrawBonusTableNumberRight(valueX, rowDeathsY, tempbuf, MF_Bluefont.pal);
+                            }
+                        }
+
+                        if (totalclock > (60*10))
+                        {
+                            if (bonuscnt == 5)
+                            {
+                                bonuscnt++;
+                                S_PlaySound(PIPEBOMB_EXPLODE);
+                            }
+
+                            for (int32_t playerIndex = 0; playerIndex < bonusPlayerCount; ++playerIndex)
+                            {
+                                int32_t const valueX = colStart + playerIndex*colStep + 15;
+
+                                Bsprintf(tempbuf, "%d", secrets[playerIndex]);
+                                if (bestSecrets > 0 && secrets[playerIndex] == bestSecrets)
+                                    G_DrawBonusTableNumberRight(valueX, rowSecretsY, tempbuf, 11);
+                                else
+                                    G_DrawBonusTableNumberRight(valueX, rowSecretsY, tempbuf, MF_Bluefont.pal);
+                            }
+
+                            if (bonuscnt == 4)
+                                bonuscnt++;
+                        }
+
+                        gametext(labelX, rowEnemiesLeftY, "Enemies Left:");
+                        if (ud.player_skill > 3)
+                            gametext(142, rowEnemiesLeftY, "N/A");
+                        else
+                        {
+                            Bsprintf(tempbuf, "%d", max<int32_t>(G_GetBonusMaxActorsKilled() - G_GetBonusActorsKilled(), 0));
+                            gametext_number(142, rowEnemiesLeftY, tempbuf);
+                        }
+
+                        gametext(labelX, rowSecretsLeftY, "Secrets Left:");
+                        Bsprintf(tempbuf, "%d", max<int32_t>(G_GetBonusMaxSecretRooms() - G_GetBonusSecretRooms(), 0));
+                        gametext_number(142, rowSecretsLeftY, tempbuf);
+
+                        yy = rowSecretsLeftY + 10;
+                    }
+                    else
+                    {
+                        int32_t const leftLabelX = 10;
+                        int32_t const leftValueX = 142;
+                        int32_t const rightLabelX = 170;
+                        int32_t const rightValueX = 300;
+
+                        gametext(leftLabelX, enemyY+9, "Enemies Killed:");
+                        enemyY += 10;
+                        gametext(leftLabelX, enemyY+9, "Enemies Left:");
+                        enemyY += 10;
+
+                        if (totalclock > (60*9))
+                        {
+                            gametext(rightLabelX, secretY+9, "Secrets Found:");
+                            secretY += 10;
+                            gametext(rightLabelX, secretY+9, "Secrets Missed:");
+                            secretY += 10;
+
+                            if (bonuscnt == 4)
+                                bonuscnt++;
+                        }
+
+                        if (totalclock > (60*7))
+                        {
+                            if (bonuscnt == 3)
+                            {
+                                bonuscnt++;
+                                S_PlaySound(PIPEBOMB_EXPLODE);
+                            }
+
+                            enemyY = zz;
+                            Bsprintf(tempbuf, "%-3d", g_player[myconnectindex].ps->actors_killed);
+                            gametext_number(leftValueX, enemyY+9, tempbuf);
+                            enemyY += 10;
+
+                            if (ud.player_skill > 3)
+                            {
+                                gametext(leftValueX, enemyY+9, "N/A");
+                                enemyY += 10;
+                            }
+                            else
+                            {
+                                Bsprintf(tempbuf, "%-3d", max<int32_t>(G_GetBonusMaxActorsKilled() - G_GetBonusActorsKilled(), 0));
                                 gametext_number(leftValueX, enemyY+9, tempbuf);
                                 enemyY += 10;
                             }
                         }
-                        else
+
+                        if (totalclock > (60*10))
                         {
-                            Bsprintf(tempbuf, "%-3d", g_player[myconnectindex].ps->actors_killed);
-                            gametext_number(leftValueX, enemyY+9, tempbuf);
-                            enemyY += 10;
-                        }
-
-                        if (ud.player_skill > 3)
-                        {
-                            gametext(leftValueX, enemyY+9, "N/A");
-                            enemyY += 10;
-                        }
-                        else
-                        {
-                            int32_t const actorsLeft = G_GetBonusMaxActorsKilled() - G_GetBonusActorsKilled();
-
-                            if (actorsLeft < 0)
-                                Bsprintf(tempbuf, "%-3d", 0);
-                            else Bsprintf(tempbuf, "%-3d", actorsLeft);
-                            gametext_number(leftValueX, enemyY+9, tempbuf);
-                            enemyY += 10;
-                        }
-                    }
-
-                    if (totalclock > (60*10))
-                    {
-                        if (bonuscnt == 5)
-                        {
-                            bonuscnt++;
-                            S_PlaySound(PIPEBOMB_EXPLODE);
-                        }
-
-                        secretY = zz;
-
-                        if (showSplitPlayerStats)
-                        {
-                            secretY += 10;
-
-                            for (int32_t playerIndex = 0; playerIndex < bonusPlayerCount; ++playerIndex)
+                            if (bonuscnt == 5)
                             {
-                                DukePlayer_t const * const pPlayer = g_player[G_GetBonusPlayer(playerIndex)].ps;
-
-                                Bsprintf(tempbuf, "%-3d", pPlayer != nullptr ? pPlayer->secret_rooms : 0);
-                                gametext_number(rightValueX, secretY+9, tempbuf);
-                                secretY += 10;
+                                bonuscnt++;
+                                S_PlaySound(PIPEBOMB_EXPLODE);
                             }
-                        }
-                        else
-                        {
+
+                            secretY = zz;
                             Bsprintf(tempbuf, "%-3d", G_GetBonusSecretRooms());
                             gametext_number(rightValueX, secretY+9, tempbuf);
                             secretY += 10;
-                        }
-#if 0
-                        // Always overwritten.
-                        if (g_player[myconnectindex].ps->secret_rooms > 0)
-                            Bsprintf(tempbuf, "%-3d%%", (100*g_player[myconnectindex].ps->secret_rooms/g_player[myconnectindex].ps->max_secret_rooms));
-#endif
-                        Bsprintf(tempbuf, "%-3d", max<int32_t>(G_GetBonusMaxSecretRooms() - G_GetBonusSecretRooms(), 0));
-                        gametext_number(rightValueX, secretY+9, tempbuf);
-                        secretY += 10;
-                    }
 
-                    yy = max<int32_t>(enemyY, secretY);
+                            Bsprintf(tempbuf, "%-3d", max<int32_t>(G_GetBonusMaxSecretRooms() - G_GetBonusSecretRooms(), 0));
+                            gametext_number(rightValueX, secretY+9, tempbuf);
+                            secretY += 10;
+                        }
+
+                        yy = max<int32_t>(enemyY, secretY);
+                    }
                 }
 
                 if (totalclock > 10240 && totalclock < 10240+10240)

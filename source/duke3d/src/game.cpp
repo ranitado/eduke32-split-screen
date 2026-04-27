@@ -43,6 +43,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "savegame.h"
 #include "sbar.h"
 #include "screens.h"
+#include "sounds.h"
 #include "splitscreen.h"
 #include "splitscreen_input.h"
 
@@ -7081,6 +7082,7 @@ int app_main(int argc, char const* const* argv)
     G_MaybeAllocPlayer(0);
 
     G_CheckCommandLine(argc,argv);
+    G_ReadSplitScreenRelaunchState();
 
     // This needs to happen afterwards, as G_CheckCommandLine() is where we set
     // up the command-line-provided search paths (duh).
@@ -7442,6 +7444,39 @@ MAIN_LOOP_RESTART:
         q = 0;
 
     Menu_Change(MENU_MAIN);
+
+    if (g_splitScreenResumeLoadPath[0] != '\0')
+    {
+        savebrief_t sv;
+        Bstrncpyz(sv.path, g_splitScreenResumeLoadPath, sizeof(sv.path));
+        Bstrncpyz(sv.name, g_splitScreenResumeLoadPath, sizeof(sv.name));
+        g_splitScreenResumeLoadPath[0] = '\0';
+        g_noLogo = 0;
+        g_noLogoAnim = 0;
+
+        g_freshload = sv;
+        g_quickload = &g_freshload;
+
+        KB_FlushKeyboardQueue();
+        KB_ClearKeysDown();
+
+        if (G_LoadPlayerMaybeMulti(sv) == 0)
+        {
+            ud.warp_on = 2;
+            S_RestartMusic();
+            S_PauseMusic(false);
+        }
+    }
+    else if (g_splitScreenResumeNewGame)
+    {
+        int32_t const gameMode = g_splitScreenResumeGameMode;
+        int32_t const playerCount = g_splitScreenResumePlayerCount;
+        int32_t const volumeNum = g_splitScreenResumeVolume;
+        int32_t const levelNum = g_splitScreenResumeLevel;
+        int32_t const skillNum = g_splitScreenResumeSkill;
+        g_splitScreenResumeNewGame = 0;
+        Menu_ResumeNewGameAfterAddonRelaunch(gameMode, playerCount, volumeNum, levelNum, skillNum);
+    }
 
     if(g_netClient)
     {

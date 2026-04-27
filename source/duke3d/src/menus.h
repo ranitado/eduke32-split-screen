@@ -41,6 +41,8 @@ extern "C" {
 extern int32_t cvar_kbo_type;
 extern int32_t cvar_kbconfirm;
 
+void M_UpdateDeveloperModeToggle(void);
+
 // #define EDUKE32_SIMPLE_MENU
 
 enum MenuIndex_t {
@@ -57,6 +59,8 @@ enum MenuIndex_t {
     MENU_GAMEMODE      = 105,
     MENU_LEVELSELECT    = 106,
     MENU_PLAYERCOUNT    = 107,
+    MENU_ADDONMESSAGE   = 108,
+    MENU_EXTRACONTENT   = 109,
     MENU_SKILL          = 110,
     MENU_GAMESETUP      = 200,
     MENU_OPTIONS        = 202,
@@ -493,6 +497,7 @@ int G_CheckPlayerColor(int color);
 void Menu_Init(void);
 void Menu_Open(uint8_t playerID);
 void Menu_Close(uint8_t playerID);
+void Menu_ResumeNewGameAfterAddonRelaunch(int32_t gameMode, int32_t playerCount, int32_t volumeNum, int32_t levelNum, int32_t skillNum);
 void M_DisplayMenus(void);
 
 extern MenuFont_t MF_Redfont, MF_Bluefont, MF_Minifont;
@@ -515,7 +520,7 @@ extern int32_t m_mousewake_watchpoint, m_menuchange_watchpoint;
 # define MOUSEACTIVECONDITION (totalclock - m_mouselastactivity < M_MOUSETIMEOUT)
 # define MOUSEACTIVECONDITIONAL(condition) (MOUSEACTIVECONDITION && (condition))
 # define MOUSEINACTIVECONDITIONAL(condition) ((((g_player[myconnectindex].ps->gm & (MODE_MENU)) != MODE_MENU) || !MOUSEACTIVECONDITION) && (condition))
-# define MOUSEWATCHPOINTCONDITIONAL(condition) ((condition) || m_mousewake_watchpoint || m_menuchange_watchpoint == 3)
+# define MOUSEWATCHPOINTCONDITIONAL(condition) ((condition) || m_mousewake_watchpoint || m_menuchange_watchpoint > 0)
 #endif
 
 #define MAXMENUGAMEPLAYLAYERS 3

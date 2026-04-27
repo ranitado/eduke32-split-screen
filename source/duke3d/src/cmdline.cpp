@@ -35,6 +35,99 @@ const char *CommandMap = NULL;
 const char *CommandName = NULL;
 int32_t g_forceWeaponChoice = 0;
 int32_t g_fakeMultiMode = 0;
+int32_t g_splitScreenResumeNewGame = 0;
+int32_t g_splitScreenResumeGameMode = 0;
+int32_t g_splitScreenResumePlayerCount = 1;
+int32_t g_splitScreenResumeSeparateKeyboardMouse = -1;
+int32_t g_splitScreenResumeVolume = -1;
+int32_t g_splitScreenResumeLevel = -1;
+int32_t g_splitScreenResumeSkill = -1;
+char g_splitScreenResumeLoadPath[BMAX_PATH] = {};
+
+static char const * const SPLITSCREEN_RELAUNCH_STATE_FILE = "splitscreen_relaunch.tmp";
+
+void G_ClearSplitScreenRelaunchState(void)
+{
+    remove(SPLITSCREEN_RELAUNCH_STATE_FILE);
+}
+
+void G_WriteSplitScreenRelaunchNewGameState(int32_t const addonNum, int32_t const gameMode, int32_t const playerCount,
+                                            int32_t const separateKeyboardMouse, int32_t const volumeNum,
+                                            int32_t const levelNum, int32_t const skillNum)
+{
+    BFILE * const fp = Bfopen(SPLITSCREEN_RELAUNCH_STATE_FILE, "wb");
+    if (fp == nullptr)
+        return;
+
+    Bfprintf(fp, "newgame %d %d %d %d %d %d %d\n", addonNum, gameMode, playerCount, separateKeyboardMouse != 0,
+             volumeNum, levelNum, skillNum);
+    Bfclose(fp);
+}
+
+void G_WriteSplitScreenRelaunchLoadState(int32_t const addonNum, char const * const path, int32_t const separateKeyboardMouse)
+{
+    if (path == nullptr || path[0] == '\0')
+        return;
+
+    BFILE * const fp = Bfopen(SPLITSCREEN_RELAUNCH_STATE_FILE, "wb");
+    if (fp == nullptr)
+        return;
+
+    Bfprintf(fp, "load %d %d %s\n", addonNum, separateKeyboardMouse != 0, path);
+    Bfclose(fp);
+}
+
+void G_ReadSplitScreenRelaunchState(void)
+{
+    BFILE * const fp = Bfopen(SPLITSCREEN_RELAUNCH_STATE_FILE, "rb");
+    if (fp == nullptr)
+        return;
+
+    char line[BMAX_PATH + 64] = {};
+    if (Bfgets(line, sizeof(line), fp) != nullptr)
+    {
+        int32_t addonNum = ADDON_NONE;
+        int32_t gameMode = 0;
+        int32_t playerCount = 1;
+        int32_t separateKeyboardMouse = -1;
+        int32_t volumeNum = -1;
+        int32_t levelNum = -1;
+        int32_t skillNum = -1;
+        char path[BMAX_PATH] = {};
+
+        int32_t const newGameFields = Bsscanf(line, "newgame %d %d %d %d %d %d %d", &addonNum, &gameMode, &playerCount,
+                                              &separateKeyboardMouse, &volumeNum, &levelNum, &skillNum);
+        if (newGameFields >= 3)
+        {
+            g_addonNum = (addonNum > ADDON_NONE && addonNum < NUMADDONS) ? addonNum : ADDON_NONE;
+            if (g_addonNum > ADDON_NONE)
+                g_noSetup = 1;
+            g_splitScreenResumeNewGame = 1;
+            g_splitScreenResumeGameMode = gameMode;
+            g_splitScreenResumePlayerCount = playerCount;
+            g_splitScreenResumeSeparateKeyboardMouse = newGameFields >= 4 ? (separateKeyboardMouse != 0) : -1;
+            g_splitScreenResumeVolume = newGameFields >= 5 ? volumeNum : -1;
+            g_splitScreenResumeLevel = newGameFields >= 6 ? levelNum : -1;
+            g_splitScreenResumeSkill = newGameFields >= 7 ? skillNum : -1;
+            g_splitScreenResumeLoadPath[0] = '\0';
+            g_noLogo = 1;
+        }
+        else if (Bsscanf(line, "load %d %d %[^\r\n]", &addonNum, &separateKeyboardMouse, path) == 3
+                 || (separateKeyboardMouse = -1, Bsscanf(line, "load %d %[^\r\n]", &addonNum, path) == 2))
+        {
+            g_addonNum = (addonNum > ADDON_NONE && addonNum < NUMADDONS) ? addonNum : ADDON_NONE;
+            if (g_addonNum > ADDON_NONE)
+                g_noSetup = 1;
+            g_splitScreenResumeNewGame = 0;
+            g_splitScreenResumeSeparateKeyboardMouse = separateKeyboardMouse >= 0 ? (separateKeyboardMouse != 0) : -1;
+            Bstrncpyz(g_splitScreenResumeLoadPath, path, sizeof(g_splitScreenResumeLoadPath));
+            g_noLogo = 1;
+        }
+    }
+
+    Bfclose(fp);
+    G_ClearSplitScreenRelaunchState();
+}
 
 void G_ShowParameterHelp(void)
 {
@@ -225,6 +318,51 @@ void G_CheckCommandLine(int32_t argc, char const * const * argv)
                             g_noSetup = 1;
                         else g_addonNum = ADDON_NONE;
 
+                        i++;
+                    }
+                    i++;
+                    continue;
+                }
+                if (!Bstrcasecmp(c+1, "splitscreennewgame"))
+                {
+                    if (argc > i+2)
+                    {
+                        g_splitScreenResumeNewGame = 1;
+                        g_splitScreenResumeGameMode = Batoi(argv[i+1]);
+                        g_splitScreenResumePlayerCount = Batoi(argv[i+2]);
+                        int32_t consumed = 2;
+                        if (argc > i+3 && argv[i+3][0] != '-')
+                        {
+                            g_splitScreenResumeSeparateKeyboardMouse = Batoi(argv[i+3]) != 0;
+                            consumed = 3;
+                        }
+                        if (argc > i+4 && argv[i+4][0] != '-')
+                        {
+                            g_splitScreenResumeVolume = Batoi(argv[i+4]);
+                            consumed = 4;
+                        }
+                        if (argc > i+5 && argv[i+5][0] != '-')
+                        {
+                            g_splitScreenResumeLevel = Batoi(argv[i+5]);
+                            consumed = 5;
+                        }
+                        if (argc > i+6 && argv[i+6][0] != '-')
+                        {
+                            g_splitScreenResumeSkill = Batoi(argv[i+6]);
+                            consumed = 6;
+                        }
+                        g_noLogo = 1;
+                        i += consumed;
+                    }
+                    i++;
+                    continue;
+                }
+                if (!Bstrcasecmp(c+1, "splitscreenload"))
+                {
+                    if (argc > i+1)
+                    {
+                        Bstrncpyz(g_splitScreenResumeLoadPath, argv[i+1], sizeof(g_splitScreenResumeLoadPath));
+                        g_noLogo = 1;
                         i++;
                     }
                     i++;

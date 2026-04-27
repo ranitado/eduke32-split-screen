@@ -86,6 +86,11 @@ static FORCE_INLINE void I_AddForceFeedback(int const lo, int const hi, int cons
     if (!joystick.hasRumble || !ud.config.controllerRumble)
         return;
 
+#ifdef SPLITSCREEN_MOD_HACKS
+    if (ud.config.SplitScreenSeparateKeyboardMouse)
+        return;
+#endif
+
     joystick.rumbleHigh = min<int>(UINT16_MAX, joystick.rumbleHigh + hi);
     joystick.rumbleLow  = min<int>(UINT16_MAX, joystick.rumbleLow + lo);
     joystick.rumbleTime = max<int>(time, joystick.rumbleTime);

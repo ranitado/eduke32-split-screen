@@ -124,6 +124,12 @@ enum {
 };
 
 enum {
+    HUD_STYLE_SINGLEPLAYER = 0,
+    HUD_STYLE_SPLITSCREEN  = 1,
+    HUD_STYLE_COUNT,
+};
+
+enum {
     BENCHMARKMODE_OFF = 0x0,
     BENCHMARKMODE_PERFORMANCE = 0x1,
     BENCHMARKMODE_GENERATE_REFERENCE = 0x2,
@@ -232,6 +238,7 @@ typedef struct {
         int32_t JoystickAimAssist;
         int32_t controllerRumble;
         int32_t SplitScreenSeparateKeyboardMouse;
+        int32_t SplitScreenHudStyle;
         int32_t SplitScreenPlayerAutoAim[MAXSPLITSCREENCONTROLLERS];
         int32_t SplitScreenPlayerAlwaysRun[MAXSPLITSCREENCONTROLLERS];
         int32_t SplitScreenPlayerWeaponSwitch[MAXSPLITSCREENCONTROLLERS];

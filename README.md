@@ -15,6 +15,7 @@ https://voidpoint.io/terminx/eduke32
 - Native local split-screen for 2, 3, and 4 players.
 - Gamepad-focused local multiplayer, with per-player controller and player setup.
 - Cooperative save/load support.
+- Optional Extra Content support for Duke Caribbean, Duke It Out in D.C., and Nuclear Winter when the user provides the required legal addon files.
 - Various general adjustments to improve the overall experience in both single-player and split-screen co-op.
 
 ## Requirements
@@ -26,9 +27,11 @@ https://voidpoint.io/terminx/eduke32
 
 This repository and its releases do **not** include `DUKE3D.GRP` or any commercial Duke Nukem 3D game data.
 
+Optional Extra Content packs also require the user to provide their own legal addon files. They are not included in this repository or in release downloads.
+
 ## Installing the Windows Release
 
-1. Download `eduke32-split-screen-v0.3-windows-x64.zip` from the GitHub release.
+1. Download `eduke32-split-screen-v0.4-windows-x64.zip` from the GitHub release.
 2. Extract it to a new folder.
 3. Copy your legal `DUKE3D.GRP` into that same folder.
 4. Run `eduke32-split-screen.exe`.

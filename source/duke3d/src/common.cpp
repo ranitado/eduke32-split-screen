@@ -236,7 +236,9 @@ int g_useCwd;
 static void G_LoadAddon(void);
 int32_t g_groupFileHandle;
 
-static struct strllist *CommandPaths, *CommandGrps;
+static struct strllist *CommandPaths, *CommandGrps, *AddonPreScriptGrps;
+void G_AddGroup(const char *buffer);
+static void G_AddAddonPreScriptGroup(const char *buffer);
 
 void G_ExtPreInit(int32_t argc,char const * const * argv)
 {
@@ -385,7 +387,13 @@ static int32_t G_LoadGrpDependencyChain(grpfile_t const * const grp)
         return -1;
 
     if (grp->type->dependency && grp->type->dependency != grp->type->crcval)
-        G_LoadGrpDependencyChain(FindGroup(grp->type->dependency));
+    {
+        grpfile_t const * const dependencyGrp = FindGroup(grp->type->dependency);
+        if (dependencyGrp != nullptr)
+            G_LoadGrpDependencyChain(dependencyGrp);
+        else if (G_GrpFile() != nullptr && Bstrcasecmp(G_GrpFile(), grp->filename))
+            G_TryLoadingGrp(G_GrpFile());
+    }
 
     int32_t const i = G_TryLoadingGrp(grp->filename);
 
@@ -481,11 +489,36 @@ void G_LoadGroups(int32_t autoload)
     }
 #endif
 
-    loaddefinitions_game(G_DefFile(), TRUE);
-
     struct strllist *s;
 
-    int const bakpathsearchmode = pathsearchmode;
+    int bakpathsearchmode = pathsearchmode;
+    pathsearchmode = 1;
+
+    while (AddonPreScriptGrps)
+    {
+        int32_t j;
+
+        s = AddonPreScriptGrps->next;
+
+        if ((j = initgroupfile(AddonPreScriptGrps->str)) == -1)
+            LOG_F(ERROR, "Unable to load addon data %s: file not found.", AddonPreScriptGrps->str);
+        else
+        {
+            g_groupFileHandle = j;
+            LOG_F(INFO, "Loaded addon data %s", AddonPreScriptGrps->str);
+            if (autoload)
+                G_DoAutoload(AddonPreScriptGrps->str);
+        }
+
+        Xfree(AddonPreScriptGrps->str);
+        Xfree(AddonPreScriptGrps);
+        AddonPreScriptGrps = s;
+    }
+    pathsearchmode = bakpathsearchmode;
+
+    loaddefinitions_game(G_DefFile(), TRUE);
+
+    bakpathsearchmode = pathsearchmode;
     pathsearchmode = 1;
 
     while (CommandGrps)
@@ -511,30 +544,137 @@ void G_LoadGroups(int32_t autoload)
     pathsearchmode = bakpathsearchmode;
 }
 
+static grpfile_t const *G_FindAddonGroup(int32_t const * const crcs, int32_t const crcCount)
+{
+    for (int32_t i = 0; i < crcCount; ++i)
+    {
+        grpfile_t const * const grp = FindGroup(crcs[i]);
+        if (grp != nullptr)
+            return grp;
+    }
+
+    return nullptr;
+}
+
+static int32_t G_FileExistsInSearchPath(char const * const filename)
+{
+    char *foundPath = nullptr;
+    int32_t const oldPathSearchMode = pathsearchmode;
+
+    pathsearchmode = 1;
+    int32_t const found = findfrompath(filename, &foundPath) >= 0;
+    pathsearchmode = oldPathSearchMode;
+
+    Xfree(foundPath);
+    if (found)
+        return 1;
+
+    BFILE * const fp = Bfopen(filename, "rb");
+    if (fp == nullptr)
+        return 0;
+
+    Bfclose(fp);
+    return 1;
+}
+
 static void G_LoadAddon(void)
 {
 #ifndef EDUKE32_STANDALONE
-    uint32_t crc;
+    static int32_t const dukeDCCrcs[] = {
+        DUKEDC_CRC, DUKEDCPP_CRC, DUKEDC13_CRC, (int32_t)0x39A692BF, (int32_t)0xC63B6A8B,
+    };
+    static int32_t const nuclearWinterCrcs[] = {
+        DUKENW_CRC, (int32_t)0xC7EFBFA9,
+    };
+    static int32_t const caribbeanCrcs[] = {
+        DUKECB_CRC, VACA15_CRC, VACAPP_CRC, VACA13_CRC, (int32_t)0x65B5F690, (int32_t)0x64CF2351,
+    };
+    static char const * const dukeDCFiles[] = { "DUKEDC.GRP", "dukedc.grp" };
+    static char const * const nuclearWinterFiles[] = { "NWINTER.GRP", "nwinter.grp" };
+    static char const * const caribbeanFiles[] = { "VACATION.GRP", "vacation.grp" };
+    static char const * const caribbeanCompanionFiles[] = { "VACATION.PRG", "vacation.prg", "VACATION.CON", "vacation.con" };
+
+    grpfile_t const *grp = nullptr;
+    char const *fallbackScriptName = nullptr;
+    char const * const *fallbackFiles = nullptr;
+    int32_t fallbackFileCount = 0;
+    char const * const *companionFiles = nullptr;
+    int32_t companionFileCount = 0;
 
     switch (g_addonNum)
     {
     case ADDON_DUKEDC:
-        crc = DUKEDC_CRC;
+        grp = G_FindAddonGroup(dukeDCCrcs, ARRAY_SIZE(dukeDCCrcs));
+        fallbackFiles = dukeDCFiles;
+        fallbackFileCount = ARRAY_SIZE(dukeDCFiles);
         break;
     case ADDON_NWINTER:
-        crc = DUKENW_CRC;
+        grp = G_FindAddonGroup(nuclearWinterCrcs, ARRAY_SIZE(nuclearWinterCrcs));
+        fallbackScriptName = "NWINTER.CON";
+        fallbackFiles = nuclearWinterFiles;
+        fallbackFileCount = ARRAY_SIZE(nuclearWinterFiles);
         break;
     case ADDON_CARIBBEAN:
-        crc = DUKECB_CRC;
+        grp = G_FindAddonGroup(caribbeanCrcs, ARRAY_SIZE(caribbeanCrcs));
+        fallbackFiles = caribbeanFiles;
+        fallbackFileCount = ARRAY_SIZE(caribbeanFiles);
+        companionFiles = caribbeanCompanionFiles;
+        companionFileCount = ARRAY_SIZE(caribbeanCompanionFiles);
         break;
     default:
         return;
     }
 
-    grpfile_t const * const grp = FindGroup(crc);
+    if (g_addonNum == ADDON_CARIBBEAN)
+    {
+        int32_t hasCompanion = 0;
+        for (int32_t i = 0; i < companionFileCount; ++i)
+            if (G_FileExistsInSearchPath(companionFiles[i]))
+            {
+                hasCompanion = 1;
+                break;
+            }
+
+        int32_t const needsCompanion = grp != nullptr && (grp->type->crcval == VACA15_CRC || grp->type->crcval == VACAPP_CRC);
+        if (needsCompanion && !hasCompanion)
+        {
+            LOG_F(WARNING, "Duke Caribbean requires VACATION.PRG or VACATION.CON with this VACATION.GRP.");
+            return;
+        }
+    }
 
     if (grp)
         g_selectedGrp = grp;
+    else
+    {
+        for (int32_t i = 0; i < fallbackFileCount; ++i)
+        {
+            if (!G_FileExistsInSearchPath(fallbackFiles[i]))
+                continue;
+
+            G_AddAddonPreScriptGroup(fallbackFiles[i]);
+
+            for (int32_t j = 0; j < companionFileCount; ++j)
+            {
+                if (G_FileExistsInSearchPath(companionFiles[j]))
+                {
+                    if (Bstrstr(companionFiles[j], ".CON") || Bstrstr(companionFiles[j], ".con"))
+                    {
+                        if (g_scriptNamePtr == nullptr)
+                            g_scriptNamePtr = dup_filename(companionFiles[j]);
+                    }
+                    else
+                        G_AddAddonPreScriptGroup(companionFiles[j]);
+                    break;
+                }
+            }
+
+            if (fallbackScriptName != nullptr && g_scriptNamePtr == nullptr)
+                g_scriptNamePtr = dup_filename(fallbackScriptName);
+
+            break;
+        }
+    }
 #endif
 }
 
@@ -886,6 +1026,29 @@ void G_AddGroup(const char *buffer)
         return;
     }
     CommandGrps = s;
+}
+
+static void G_AddAddonPreScriptGroup(const char *buffer)
+{
+    char buf[BMAX_PATH];
+
+    struct strllist *s = (struct strllist *)Xcalloc(1, sizeof(struct strllist));
+
+    Bstrcpy(buf, buffer);
+
+    if (Bstrchr(buf, '.') == 0)
+        Bstrcat(buf, ".grp");
+
+    s->str = Xstrdup(buf);
+
+    if (AddonPreScriptGrps)
+    {
+        struct strllist *t;
+        for (t = AddonPreScriptGrps; t->next; t = t->next) ;
+        t->next = s;
+        return;
+    }
+    AddonPreScriptGrps = s;
 }
 
 void G_AddPath(const char *buffer)

@@ -25,13 +25,16 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "build.h"
 #include "cmdline.h"
 #include "duke3d.h"
+#include "game.h"
 #include "mmulti.h"
+#include "premap.h"
 
 namespace
 {
 static constexpr int32_t MAX_LOCAL_SPLITSCREEN_PLAYERS = 4;
 static int32_t g_splitScreenConfiguredPlayerCount = 0;
 static int32_t g_splitScreenActivePlayerCount = 0;
+static int32_t g_splitScreenActivePlayers[MAX_LOCAL_SPLITSCREEN_PLAYERS] = { 0, 1, 2, 3 };
 
 static int32_t G_GetRequestedFakeMultiplayerCount(void)
 {
@@ -51,25 +54,187 @@ static void G_EnsureSplitScreenPlayerCountsInitialized(void)
     int32_t const requestedPlayerCount = G_GetRequestedFakeMultiplayerCount();
     g_splitScreenConfiguredPlayerCount = clamp(requestedPlayerCount, 1, MAX_LOCAL_SPLITSCREEN_PLAYERS);
     g_splitScreenActivePlayerCount = clamp(requestedPlayerCount, 1, MAX_LOCAL_SPLITSCREEN_PLAYERS);
+
+    for (int i = 0; i < MAX_LOCAL_SPLITSCREEN_PLAYERS; ++i)
+        g_splitScreenActivePlayers[i] = i;
 }
 
-static void G_RebuildLocalConnectionChain(int32_t const playerCount)
+static int32_t G_GetHighestActiveSplitScreenPlayer(void)
 {
-    connecthead = 0;
+    int32_t highestPlayer = 0;
+
+    for (int viewIndex = 0; viewIndex < g_splitScreenActivePlayerCount; ++viewIndex)
+        highestPlayer = max(highestPlayer, g_splitScreenActivePlayers[viewIndex]);
+
+    return highestPlayer;
+}
+
+static void G_RebuildLocalConnectionChain(void)
+{
+    connecthead = g_splitScreenActivePlayers[0];
 
     for (int i = 0; i < MAXPLAYERS; ++i)
     {
         connectpoint2[i] = -1;
-        g_player[i].playerquitflag = i < playerCount;
+        g_player[i].playerquitflag = 0;
     }
 
-    for (int i = 0; i < playerCount - 1; ++i)
-        connectpoint2[i] = i + 1;
+    for (int viewIndex = 0; viewIndex < g_splitScreenActivePlayerCount; ++viewIndex)
+    {
+        int const playerNum = g_splitScreenActivePlayers[viewIndex];
+        if ((unsigned)playerNum >= MAXPLAYERS)
+            continue;
+
+        g_player[playerNum].playerquitflag = 1;
+        connectpoint2[playerNum] = (viewIndex + 1 < g_splitScreenActivePlayerCount) ? g_splitScreenActivePlayers[viewIndex + 1] : -1;
+    }
 }
 
 static void G_SyncSinglePlayerSettingsFromPrimaryPlayer(void)
 {
     ud.auto_run = ud.config.SplitScreenPlayerAlwaysRun[0] != 0;
+}
+
+static void G_UpdateSplitScreenMultiplayerState(void)
+{
+#ifdef SPLITSCREEN_MOD_HACKS
+    g_fakeMultiMode = (g_splitScreenActivePlayerCount > 1) ? g_splitScreenActivePlayerCount : 0;
+#endif
+
+    int32_t const localPlayerLimit = max<int32_t>(g_splitScreenActivePlayerCount, G_GetHighestActiveSplitScreenPlayer() + 1);
+    ud.multimode = localPlayerLimit;
+    g_mostConcurrentPlayers = localPlayerLimit;
+
+    if (g_splitScreenActivePlayerCount == 1)
+        G_SyncSinglePlayerSettingsFromPrimaryPlayer();
+
+    G_RebuildLocalConnectionChain();
+}
+
+static void G_SetPlayerSpriteVisible(int32_t const playerNum, int32_t const visible)
+{
+    if ((unsigned)playerNum >= MAXPLAYERS || g_player[playerNum].ps == nullptr)
+        return;
+
+    int32_t const spriteNum = g_player[playerNum].ps->i;
+    if ((unsigned)spriteNum >= MAXSPRITES)
+        return;
+
+    if (visible)
+        sprite[spriteNum].cstat = CSTAT_SPRITE_BLOCK + CSTAT_SPRITE_BLOCK_HITSCAN;
+    else
+        sprite[spriteNum].cstat = CSTAT_SPRITE_INVISIBLE;
+}
+
+static int32_t G_FindSplitScreenPlayerSprite(int32_t const playerNum)
+{
+    for (int32_t spriteNum = headspritestat[STAT_PLAYER]; spriteNum >= 0; spriteNum = nextspritestat[spriteNum])
+    {
+        if (sprite[spriteNum].picnum == APLAYER && sprite[spriteNum].yvel == playerNum)
+            return spriteNum;
+    }
+
+    return -1;
+}
+
+static int32_t G_EnsureSplitScreenPlayerSprite(int32_t const playerNum)
+{
+    auto * const ps = g_player[playerNum].ps;
+    if (ps == nullptr)
+        return -1;
+
+    int32_t spriteNum = ps->i;
+    if ((unsigned)spriteNum < MAXSPRITES && sprite[spriteNum].statnum == STAT_PLAYER
+        && sprite[spriteNum].picnum == APLAYER && sprite[spriteNum].yvel == playerNum)
+        return spriteNum;
+
+    spriteNum = G_FindSplitScreenPlayerSprite(playerNum);
+    if (spriteNum >= 0)
+    {
+        ps->i = spriteNum;
+        return spriteNum;
+    }
+
+    auto * const primary = g_player[myconnectindex].ps;
+    if (primary == nullptr || primary->cursectnum < 0)
+        return ps->i;
+
+    spriteNum = A_InsertSprite(primary->cursectnum, primary->pos.x, primary->pos.y, primary->pos.z,
+                               APLAYER, 0, 0, 0, fix16_to_int(primary->q16ang), 0, 0, 0, STAT_PLAYER);
+    if ((unsigned)spriteNum >= MAXSPRITES)
+        return ps->i;
+
+    auto &s = sprite[spriteNum];
+    s.yvel = playerNum;
+    s.owner = spriteNum;
+    actor[spriteNum].htowner = spriteNum;
+    actor[spriteNum].bpos = s.xyz;
+    ps->i = spriteNum;
+
+    return spriteNum;
+}
+
+static void G_SetJoinedSplitScreenPlayerPosition(int32_t const playerNum, vec3_t const &pos, int32_t const sectNum, int32_t const ang)
+{
+    DukePlayer_t * const pPlayer = g_player[playerNum].ps;
+    if (pPlayer == nullptr)
+        return;
+
+    pPlayer->opos = pPlayer->pos = pos;
+    pPlayer->bobpos = pPlayer->pos.xy;
+    pPlayer->cursectnum = sectNum;
+    pPlayer->oq16ang = pPlayer->q16ang = fix16_from_int(ang);
+
+    int32_t const spriteNum = pPlayer->i;
+    if ((unsigned)spriteNum < MAXSPRITES)
+    {
+        vec3_t spritePos = pPlayer->pos;
+        spritePos.z += pPlayer->spritezoffset;
+        setsprite(spriteNum, &spritePos);
+        actor[spriteNum].bpos = pPlayer->pos;
+    }
+}
+
+static void G_MoveJoinedSplitScreenPlayerToCoopSpawn(int32_t const playerNum)
+{
+    DukePlayer_t const * const pAnchor = g_player[myconnectindex].ps;
+    if (pAnchor == nullptr || pAnchor->cursectnum < 0)
+        return;
+
+    G_SetJoinedSplitScreenPlayerPosition(playerNum, pAnchor->pos, pAnchor->cursectnum, fix16_to_int(pAnchor->q16ang));
+}
+
+static void G_SetupJoinedSplitScreenPlayer(int32_t const playerNum)
+{
+    if ((unsigned)playerNum >= MAXPLAYERS || g_player[playerNum].ps == nullptr)
+        return;
+
+    int32_t primaryAccess = 0;
+    if (g_player[myconnectindex].ps != nullptr && playerNum != myconnectindex)
+    {
+        int32_t const spriteNum = G_EnsureSplitScreenPlayerSprite(playerNum);
+        primaryAccess = g_player[myconnectindex].ps->got_access;
+        Bmemcpy(g_player[playerNum].ps, g_player[myconnectindex].ps, sizeof(DukePlayer_t));
+        g_player[playerNum].ps->i = spriteNum;
+    }
+
+    G_EnsureSplitScreenPlayerSprite(playerNum);
+
+    Bstrncpyz(g_player[playerNum].user_name,
+              playerNum == myconnectindex ? szPlayerName : ud.config.SplitScreenPlayerName[G_GetSplitScreenPlayerConfigIndex(playerNum)],
+              sizeof(g_player[playerNum].user_name));
+    g_player[playerNum].ps->team = g_player[playerNum].pteam = G_GetLocalPlayerTeamSetting(playerNum);
+    g_player[playerNum].ps->palookup = g_player[playerNum].pcolor = G_GetLocalPlayerColorSetting(playerNum);
+    g_player[playerNum].ps->weaponswitch = G_GetLocalPlayerWeaponSwitchSetting(playerNum);
+    g_player[playerNum].ps->auto_aim = G_GetLocalPlayerAutoAimSetting(playerNum);
+
+    P_ResetPlayer(playerNum);
+    P_ResetMultiPlayer(playerNum);
+    if (playerNum != myconnectindex)
+        g_player[playerNum].ps->got_access = primaryAccess;
+    g_player[playerNum].ps->gm = MODE_GAME;
+    G_MoveJoinedSplitScreenPlayerToCoopSpawn(playerNum);
+    G_SetPlayerSpriteVisible(playerNum, 1);
 }
 }
 
@@ -100,7 +265,23 @@ int32_t G_GetSplitScreenPlayer(int32_t const viewIndex)
     if ((unsigned)viewIndex >= (unsigned)G_GetSplitScreenPlayerCount())
         return -1;
 
-    return viewIndex;
+    return g_splitScreenActivePlayers[viewIndex];
+}
+
+int32_t G_GetSplitScreenViewForPlayer(int32_t const playerNum)
+{
+    G_EnsureSplitScreenPlayerCountsInitialized();
+
+    for (int viewIndex = 0; viewIndex < g_splitScreenActivePlayerCount; ++viewIndex)
+        if (g_splitScreenActivePlayers[viewIndex] == playerNum)
+            return viewIndex;
+
+    return -1;
+}
+
+int32_t G_IsSplitScreenPlayerActive(int32_t const playerNum)
+{
+    return G_GetSplitScreenViewForPlayer(playerNum) >= 0;
 }
 
 void G_SetConfiguredSplitScreenPlayerCount(int32_t const playerCount)
@@ -119,14 +300,60 @@ void G_SetActiveSplitScreenPlayerCount(int32_t const playerCount)
 
     g_splitScreenActivePlayerCount = clamp(playerCount, 1, G_GetConfiguredSplitScreenPlayerCount());
 
-    if (g_splitScreenActivePlayerCount == 1)
-        G_SyncSinglePlayerSettingsFromPrimaryPlayer();
+    for (int i = 0; i < g_splitScreenActivePlayerCount; ++i)
+        g_splitScreenActivePlayers[i] = i;
 
-#ifdef SPLITSCREEN_MOD_HACKS
-    g_fakeMultiMode = (g_splitScreenActivePlayerCount > 1) ? g_splitScreenActivePlayerCount : 0;
-#endif
+    G_UpdateSplitScreenMultiplayerState();
+}
 
-    G_RebuildLocalConnectionChain(g_splitScreenActivePlayerCount);
+int32_t G_AddSplitScreenPlayer(int32_t const playerNum)
+{
+    G_EnsureSplitScreenPlayerCountsInitialized();
+
+    if ((unsigned)playerNum >= (unsigned)MAX_LOCAL_SPLITSCREEN_PLAYERS || playerNum == myconnectindex)
+        return -1;
+
+    if (G_IsSplitScreenPlayerActive(playerNum) || g_splitScreenActivePlayerCount >= MAX_LOCAL_SPLITSCREEN_PLAYERS)
+        return -1;
+
+    int32_t const oldActivePlayerCount = g_splitScreenActivePlayerCount;
+
+    g_splitScreenConfiguredPlayerCount = max(g_splitScreenConfiguredPlayerCount, playerNum + 1);
+    g_splitScreenActivePlayers[g_splitScreenActivePlayerCount++] = playerNum;
+
+    if (oldActivePlayerCount == 1)
+        ud.m_coop = ud.coop = 1;
+
+    G_UpdateSplitScreenMultiplayerState();
+    G_SetupJoinedSplitScreenPlayer(playerNum);
+    G_UpdateSplitScreenMultiplayerState();
+    G_UpdateScreenArea();
+    pub = NUMPAGES;
+    pus = NUMPAGES;
+
+    return playerNum;
+}
+
+int32_t G_DisconnectSplitScreenPlayer(int32_t const playerNum)
+{
+    G_EnsureSplitScreenPlayerCountsInitialized();
+
+    int32_t const viewIndex = G_GetSplitScreenViewForPlayer(playerNum);
+    if (playerNum == myconnectindex || viewIndex <= 0 || g_splitScreenActivePlayerCount <= 1)
+        return -1;
+
+    for (int i = viewIndex; i + 1 < g_splitScreenActivePlayerCount; ++i)
+        g_splitScreenActivePlayers[i] = g_splitScreenActivePlayers[i + 1];
+
+    --g_splitScreenActivePlayerCount;
+
+    G_SetPlayerSpriteVisible(playerNum, 0);
+    G_UpdateSplitScreenMultiplayerState();
+    G_UpdateScreenArea();
+    pub = NUMPAGES;
+    pus = NUMPAGES;
+
+    return 0;
 }
 
 int32_t G_GetSplitScreenViewport(int32_t const viewIndex, splitscreen_viewport_t * const viewport)

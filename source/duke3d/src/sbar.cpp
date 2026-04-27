@@ -36,8 +36,48 @@ int32_t althud_shadows = 1;
 #endif
 
 static int32_t g_sbarPlayer = -1;
+static int32_t G_GetSplitScreenViewportForPlayer(int32_t playerNum, splitscreen_viewport_t *viewport);
+static int32_t G_GetStatusBarScaleForPlayer(int32_t playerNum, int32_t baseScale);
 static int32_t G_GetSplitScreenHudXOffset(void);
+static int32_t G_GetSplitScreenHudRightX(void);
 static int32_t G_GetSplitScreenHudYOffset(void);
+
+typedef struct AltHudLayout_s
+{
+    int32_t healthIconX;
+    int32_t healthNumX;
+    int32_t armorIconX;
+    int32_t armorNumX;
+    int32_t ammoIconRightX;
+    int32_t ammoNumRightX;
+    int32_t accessRightX[3];
+    int32_t inventoryIconX;
+    int32_t inventoryPercentX;
+    int32_t inventoryAmountX;
+    int32_t inventoryOnX;
+    int32_t inventoryOffX;
+    int32_t inventoryAutoX;
+} AltHudLayout_t;
+
+static int32_t G_UseMiniHudCoordinates(void)
+{
+    return G_HaveSplitScreen() || ud.screen_size == 4;
+}
+
+static int32_t G_UseSplitScreenQuarterHud(void)
+{
+#ifdef SPLITSCREEN_MOD_HACKS
+    splitscreen_viewport_t viewport {};
+    int const playerNum = g_sbarPlayer >= 0 ? g_sbarPlayer : screenpeek;
+
+    return G_HaveSplitScreen()
+        && G_GetSplitScreenViewportForPlayer(playerNum, &viewport) == 0
+        && viewport.width <= (xdim + 1) / 2
+        && viewport.height <= (ydim + 1) / 2;
+#else
+    return 0;
+#endif
+}
 
 static FORCE_INLINE void G_GetHudClipBounds(int32_t *x1, int32_t *y1, int32_t *x2, int32_t *y2)
 {
@@ -46,6 +86,17 @@ static FORCE_INLINE void G_GetHudClipBounds(int32_t *x1, int32_t *y1, int32_t *x
 
     if (G_HaveSplitScreen())
     {
+        splitscreen_viewport_t viewport {};
+        int const playerNum = g_sbarPlayer >= 0 ? g_sbarPlayer : screenpeek;
+        if (G_GetSplitScreenViewportForPlayer(playerNum, &viewport) == 0)
+        {
+            *x1 = viewport.x;
+            *y1 = viewport.y;
+            *x2 = viewport.x + viewport.width - 1;
+            *y2 = viewport.y + viewport.height - 1;
+            return;
+        }
+
         *x1 = windowxy1.x;
         *y1 = windowxy1.y;
         *x2 = windowxy2.x;
@@ -59,11 +110,22 @@ static FORCE_INLINE void G_GetHudClipBounds(int32_t *x1, int32_t *y1, int32_t *x
     *y2 = ydim - 1;
 }
 
+static FORCE_INLINE int32_t G_AdjustHudDastat(int32_t dastat)
+{
+#ifdef SPLITSCREEN_MOD_HACKS
+    if ((G_UseMiniHudCoordinates() && ud.config.SplitScreenHudStyle == HUD_STYLE_SPLITSCREEN)
+        || (ud.config.SplitScreenHudStyle == HUD_STYLE_SINGLEPLAYER && G_UseSplitScreenQuarterHud()))
+        dastat &= ~RS_ALIGN_MASK;
+#endif
+    return dastat;
+}
+
 static FORCE_INLINE void G_RotateSpriteHud(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
                                            int8_t dashade, char dapalnum, int32_t dastat)
 {
     int32_t x1, y1, x2, y2;
     G_GetHudClipBounds(&x1, &y1, &x2, &y2);
+    dastat = G_AdjustHudDastat(dastat);
     rotatesprite_(sx, sy, z, a, picnum, dashade, dapalnum, dastat, 0, 0, x1, y1, x2, y2);
 }
 
@@ -86,27 +148,146 @@ static int32_t G_GetSplitScreenViewportForPlayer(int32_t const playerNum, splits
     return -1;
 }
 
+static int32_t G_GetSplitScreenAdvancedHudScale(int32_t const playerNum, int32_t const baseScale)
+{
+#ifdef SPLITSCREEN_MOD_HACKS
+    splitscreen_viewport_t viewport {};
+
+    if (!G_HaveSplitScreen() || ud.config.SplitScreenHudStyle != HUD_STYLE_SINGLEPLAYER)
+        return baseScale;
+
+    if (G_GetSplitScreenViewportForPlayer(playerNum, &viewport) != 0)
+        return baseScale;
+
+    if (viewport.width <= (xdim + 1) / 2 && viewport.height <= (ydim + 1) / 2)
+        return scale(baseScale, 55, 100);
+
+    return baseScale;
+#else
+    (void) playerNum;
+
+    return baseScale;
+#endif
+}
+
+static int32_t G_GetSplitScreenBasicHudScale(int32_t const playerNum, int32_t const baseScale)
+{
+#ifdef SPLITSCREEN_MOD_HACKS
+    splitscreen_viewport_t viewport {};
+
+    if (ud.config.SplitScreenHudStyle != HUD_STYLE_SPLITSCREEN)
+        return baseScale;
+
+    if (!G_HaveSplitScreen())
+        return max<int32_t>(1, scale(baseScale, 48, 100));
+
+    if (G_GetSplitScreenViewportForPlayer(playerNum, &viewport) != 0)
+        return baseScale;
+
+    if (viewport.width >= xdim && viewport.height < ydim)
+    {
+        if (G_GetSplitScreenPlayerCount() == 2)
+            return scale(baseScale, 150, 100);
+
+        return scale(baseScale, 120, 100);
+    }
+
+    return baseScale;
+#else
+    UNREFERENCED_PARAMETER(playerNum);
+    return baseScale;
+#endif
+}
+
+static int32_t G_GetStatusBarScaleForPlayer(int32_t const playerNum, int32_t const baseScale)
+{
+#ifdef SPLITSCREEN_MOD_HACKS
+    if (ud.config.SplitScreenHudStyle == HUD_STYLE_SPLITSCREEN)
+        return G_GetSplitScreenBasicHudScale(playerNum, baseScale);
+
+    return G_GetSplitScreenAdvancedHudScale(playerNum, baseScale);
+#else
+    UNREFERENCED_PARAMETER(playerNum);
+    return baseScale;
+#endif
+}
+
+static AltHudLayout_t G_GetAltHudLayoutForPlayer(int32_t const playerNum)
+{
+    AltHudLayout_t layout = { 2, 40, 62, 105, 57, 20, { 39, 34, 29 }, 129, 160, 152, 156, 152, 147 };
+
+#ifdef SPLITSCREEN_MOD_HACKS
+    splitscreen_viewport_t viewport {};
+
+    if (!G_HaveSplitScreen() || G_GetSplitScreenViewportForPlayer(playerNum, &viewport) != 0)
+        return layout;
+
+    if (viewport.width <= (xdim + 1) / 2 && viewport.height <= (ydim + 1) / 2)
+    {
+        layout.healthIconX = -3;
+        layout.healthNumX = 34;
+        layout.armorIconX = 55;
+        layout.armorNumX = 94;
+        layout.inventoryIconX = 116;
+        layout.inventoryPercentX = 146;
+        layout.inventoryAmountX = 139;
+        layout.inventoryOnX = 143;
+        layout.inventoryOffX = 141;
+        layout.inventoryAutoX = 136;
+
+        layout.ammoIconRightX = 52;
+        layout.ammoNumRightX = 15;
+        layout.accessRightX[0] = 35;
+        layout.accessRightX[1] = 29;
+        layout.accessRightX[2] = 24;
+
+        int32_t const visualShift = (viewport.x + (viewport.width >> 1)) < (xdim >> 1) ? -28 : 12;
+        layout.healthIconX += visualShift;
+        layout.healthNumX += visualShift;
+        layout.armorIconX += visualShift;
+        layout.armorNumX += visualShift;
+        layout.inventoryIconX += visualShift;
+        layout.inventoryPercentX += visualShift;
+        layout.inventoryAmountX += visualShift;
+        layout.inventoryOnX += visualShift;
+        layout.inventoryOffX += visualShift;
+        layout.inventoryAutoX += visualShift;
+
+        layout.ammoIconRightX -= visualShift;
+        layout.ammoNumRightX -= visualShift;
+        layout.accessRightX[0] -= visualShift;
+        layout.accessRightX[1] -= visualShift;
+        layout.accessRightX[2] -= visualShift;
+        return layout;
+    }
+#else
+    UNREFERENCED_PARAMETER(playerNum);
+#endif
+
+    return layout;
+}
+
 static int32_t sbarx(int32_t x)
 {
-    if (ud.screen_size == 4) return sbarsc(x<<16) + G_GetSplitScreenHudXOffset();
+    if (G_UseMiniHudCoordinates()) return sbarsc(x<<16) + G_GetSplitScreenHudXOffset();
     return (((320<<16) - sbarsc(320<<16)) >> 1) + sbarsc(x<<16) + G_GetSplitScreenHudXOffset();
 }
 
 static int32_t sbarxr(int32_t x)
 {
-    if (ud.screen_size == 4) return (320<<16) - sbarsc(x<<16) + G_GetSplitScreenHudXOffset();
+    if (G_UseMiniHudCoordinates()) return G_GetSplitScreenHudRightX() - sbarsc(x<<16);
     return (((320<<16) - sbarsc(320<<16)) >> 1) + sbarsc(x<<16) + G_GetSplitScreenHudXOffset();
 }
 
 static int32_t sbary(int32_t y)
 {
-    if (ud.hudontop == 1 && ud.screen_size == 4 && ud.althud == 1) return sbarsc(y << 16) + G_GetSplitScreenHudYOffset();
+    if (ud.hudontop == 1 && G_UseMiniHudCoordinates() && ud.althud == 1) return sbarsc(y << 16) + G_GetSplitScreenHudYOffset();
     else return (200<<16) - sbarsc(200<<16) + sbarsc(y<<16) + G_GetSplitScreenHudYOffset();
 }
 
 int32_t sbarx16(int32_t x)
 {
-    if (ud.screen_size == 4) return sbarsc(x) + G_GetSplitScreenHudXOffset();
+    if (G_UseMiniHudCoordinates()) return sbarsc(x) + G_GetSplitScreenHudXOffset();
     return (((320<<16) - sbarsc(320<<16)) >> 1) + sbarsc(x) + G_GetSplitScreenHudXOffset();
 }
 
@@ -385,6 +566,7 @@ void G_DrawTXDigiNumZ(int32_t starttile, int32_t x, int32_t y, int32_t n, int32_
 {
     char b[12];
     Bsprintf(b, "%d", n);
+    cs = G_AdjustHudDastat(cs);
 
     if (!(cs & ROTATESPRITE_FULL16))
     {
@@ -456,6 +638,16 @@ static int32_t G_GetSplitScreenHudXOffset(void)
     // virtual coordinates. Offset them into the active viewport, then rely on the
     // viewport clip bounds to keep them contained.
     return scale(viewport.x, 320, xdim) << 16;
+}
+
+static int32_t G_GetSplitScreenHudRightX(void)
+{
+    splitscreen_viewport_t viewport {};
+    int const playerNum = g_sbarPlayer >= 0 ? g_sbarPlayer : screenpeek;
+    if (G_GetSplitScreenViewportForPlayer(playerNum, &viewport) != 0)
+        return 320 << 16;
+
+    return scale(viewport.x + viewport.width, 320, xdim) << 16;
 }
 
 static int32_t G_GetSplitScreenHudYOffset(void)
@@ -633,6 +825,7 @@ static inline void rotatesprite_althud(int32_t sx, int32_t sy, int32_t z, int16_
 {
     int32_t x1, y1, x2, y2;
     G_GetHudClipBounds(&x1, &y1, &x2, &y2);
+    dastat = G_AdjustHudDastat(dastat);
 
     if (videoGetRenderMode() >= REND_POLYMOST && althud_shadows)
         rotatesprite_(sbarx(sx+1), sbary(sy+1), z, a, picnum, 127, 4, dastat + POLYMOSTTRANS2, 0, 0, x1, y1, x2, y2);
@@ -643,6 +836,7 @@ static inline void rotatesprite_althudr(int32_t sx, int32_t sy, int32_t z, int16
 {
     int32_t x1, y1, x2, y2;
     G_GetHudClipBounds(&x1, &y1, &x2, &y2);
+    dastat = G_AdjustHudDastat(dastat);
 
     if (videoGetRenderMode() >= REND_POLYMOST && althud_shadows)
         rotatesprite_(sbarxr(sx - 1), sbary(sy + 1), z, a, picnum, 127, 4, dastat + POLYMOSTTRANS2, 0, 0, x1, y1, x2, y2);
@@ -653,6 +847,8 @@ void G_DrawStatusBar(int32_t snum)
 {
     int const savedSbarPlayer = g_sbarPlayer;
     g_sbarPlayer = snum;
+    int32_t const savedStatusBarScale = ud.statusbarscale;
+    ud.statusbarscale = G_GetStatusBarScaleForPlayer(snum, ud.statusbarscale);
 
     auto const p = g_player[snum].ps;
     int32_t i, j, o, u;
@@ -660,7 +856,7 @@ void G_DrawStatusBar(int32_t snum)
 
 #ifdef SPLITSCREEN_MOD_HACKS
     const int32_t ss = G_HaveSplitScreen() ? 4 : ud.screen_size;
-    const int32_t althud = G_HaveSplitScreen() ? 0 : ud.althud;
+    const int32_t althud = G_HaveSplitScreen() && ud.config.SplitScreenHudStyle == HUD_STYLE_SPLITSCREEN ? 0 : ud.althud;
 #else
     const int32_t ss = ud.screen_size;
     const int32_t althud = ud.althud;
@@ -675,6 +871,7 @@ void G_DrawStatusBar(int32_t snum)
 
     if (ss < 4)
     {
+        ud.statusbarscale = savedStatusBarScale;
         g_sbarPlayer = savedSbarPlayer;
         return;
     }
@@ -714,6 +911,7 @@ void G_DrawStatusBar(int32_t snum)
             // ALTERNATIVE STATUS BAR
 
             int32_t hudoffset = ud.hudontop == 1 ? 32 : 200;
+            AltHudLayout_t const altHudLayout = G_GetAltHudLayoutForPlayer(snum);
             static int32_t ammo_sprites[MAX_WEAPONS];
 
             if (EDUKE32_PREDICT_FALSE(ammo_sprites[0] == 0))
@@ -732,31 +930,31 @@ void G_DrawStatusBar(int32_t snum)
 
             //            rotatesprite_fs(sbarx(5+1),sbary(200-25+1),sb15h,0,SIXPAK,0,4,10+16+1+32);
             //            rotatesprite_fs(sbarx(5),sbary(200-25),sb15h,0,SIXPAK,0,0,10+16);
-            rotatesprite_althud(2, hudoffset-21, sb15h, 0, COLA, 0, 0, 10+16+256);
+            rotatesprite_althud(altHudLayout.healthIconX, hudoffset-21, sb15h, 0, COLA, 0, 0, 10+16+256);
 
             if (sprite[p->i].pal == 1 && p->last_extra < 2)
-                G_DrawAltDigiNum(40, -(hudoffset-22), 1, -16, 10+16+256);
+                G_DrawAltDigiNum(altHudLayout.healthNumX, -(hudoffset-22), 1, -16, 10+16+256);
             else if (!althud_flashing || p->last_extra >(p->max_player_health>>2) || (int32_t) totalclock&32)
             {
                 int32_t s = -8;
                 if (althud_flashing && p->last_extra > p->max_player_health)
                     s += (sintable[((int32_t) totalclock<<5)&2047]>>10);
-                G_DrawAltDigiNum(40, -(hudoffset-22), p->last_extra, s, 10+16+256);
+                G_DrawAltDigiNum(altHudLayout.healthNumX, -(hudoffset-22), p->last_extra, s, 10+16+256);
             }
 
-            rotatesprite_althud(62, hudoffset-25, sb15h, 0, SHIELD, 0, 0, 10+16+256);
+            rotatesprite_althud(altHudLayout.armorIconX, hudoffset-25, sb15h, 0, SHIELD, 0, 0, 10+16+256);
 
             {
                 int32_t lAmount = G_GetMorale(p->i, snum);
                 if (lAmount == -1)
                     lAmount = p->inv_amount[GET_SHIELD];
-                G_DrawAltDigiNum(105, -(hudoffset-22), lAmount, -16, 10+16+256);
+                G_DrawAltDigiNum(altHudLayout.armorNumX, -(hudoffset-22), lAmount, -16, 10+16+256);
             }
 
             if (ammo_sprites[p->curr_weapon] >= 0)
             {
                 i = (tilesiz[ammo_sprites[p->curr_weapon]].y >= 50) ? 16384 : 32768;
-                rotatesprite_althudr(57, hudoffset-15, sbarsc(i), 0, ammo_sprites[p->curr_weapon], 0, 0, 10+512);
+                rotatesprite_althudr(altHudLayout.ammoIconRightX, hudoffset-15, sbarsc(i), 0, ammo_sprites[p->curr_weapon], 0, 0, 10+512);
             }
 
             if (PWEAPON(snum, p->curr_weapon, WorksLike) == HANDREMOTE_WEAPON) i = HANDBOMB_WEAPON;
@@ -764,9 +962,8 @@ void G_DrawStatusBar(int32_t snum)
 
             if (PWEAPON(snum, p->curr_weapon, WorksLike) != KNEE_WEAPON &&
                 (!althud_flashing || (int32_t) totalclock&32 || p->ammo_amount[i] > (p->max_ammo_amount[i]/10)))
-                G_DrawAltDigiNum(-20, -(hudoffset-22), p->ammo_amount[i], -16, 10+16+512);
+                G_DrawAltDigiNum(-altHudLayout.ammoNumRightX, -(hudoffset-22), p->ammo_amount[i], -16, 10+16+512);
 
-            o = 102;
             permbit = 0;
 
             if (p->inven_icon)
@@ -776,44 +973,44 @@ void G_DrawStatusBar(int32_t snum)
                 i = ((unsigned) p->inven_icon < ICON_MAX) ? item_icons[p->inven_icon] : -1;
 
                 if (i >= 0)
-                    rotatesprite_althud(231-o, hudoffset-21-2, sb16, 0, i, 0, 0, orient);
+                    rotatesprite_althud(altHudLayout.inventoryIconX, hudoffset-21-2, sb16, 0, i, 0, 0, orient);
 
                 if (videoGetRenderMode() >= REND_POLYMOST && althud_shadows)
-                    minitextshade(292-30-o+1, hudoffset-10-3+1, "%", 127, 4, POLYMOSTTRANS+orient+ROTATESPRITE_MAX);
-                minitext(292-30-o, hudoffset-10-3, "%", 6, orient+ROTATESPRITE_MAX);
+                    minitextshade(altHudLayout.inventoryPercentX+1, hudoffset-10-3+1, "%", 127, 4, POLYMOSTTRANS+orient+ROTATESPRITE_MAX);
+                minitext(altHudLayout.inventoryPercentX, hudoffset-10-3, "%", 6, orient+ROTATESPRITE_MAX);
 
                 i = G_GetInvAmount(p);
                 j = G_GetInvOn(p);
 
-                G_DrawInvNum(-(284-30-o), 0, hudoffset-6-3, (uint8_t) i, 0, 10+permbit+256);
+                G_DrawInvNum(-altHudLayout.inventoryAmountX, 0, hudoffset-6-3, (uint8_t) i, 0, 10+permbit+256);
 
                 if (j > 0)
                 {
                     if (videoGetRenderMode() >= REND_POLYMOST && althud_shadows)
-                        minitextshade(288-30-o+1, hudoffset-20-3+1, "On", 127, 4, POLYMOSTTRANS+orient+ROTATESPRITE_MAX);
-                    minitext(288-30-o, hudoffset-20-3, "On", 0, orient+ROTATESPRITE_MAX);
+                        minitextshade(altHudLayout.inventoryOnX+1, hudoffset-20-3+1, "On", 127, 4, POLYMOSTTRANS+orient+ROTATESPRITE_MAX);
+                    minitext(altHudLayout.inventoryOnX, hudoffset-20-3, "On", 0, orient+ROTATESPRITE_MAX);
                 }
                 else if ((uint32_t) j != 0x80000000)
                 {
                     if (videoGetRenderMode() >= REND_POLYMOST && althud_shadows)
-                        minitextshade(284-30-o+1, hudoffset-20-3+1, "Off", 127, 4, POLYMOSTTRANS+orient+ROTATESPRITE_MAX);
-                    minitext(284-30-o, hudoffset-20-3, "Off", 2, orient+ROTATESPRITE_MAX);
+                        minitextshade(altHudLayout.inventoryOffX+1, hudoffset-20-3+1, "Off", 127, 4, POLYMOSTTRANS+orient+ROTATESPRITE_MAX);
+                    minitext(altHudLayout.inventoryOffX, hudoffset-20-3, "Off", 2, orient+ROTATESPRITE_MAX);
                 }
 
                 if (p->inven_icon >= ICON_SCUBA)
                 {
                     if (videoGetRenderMode() >= REND_POLYMOST && althud_shadows)
-                        minitextshade(284-35-o+1, hudoffset-20-3+1, "Auto", 127, 4, POLYMOSTTRANS+orient+ROTATESPRITE_MAX);
-                    minitext(284-35-o, hudoffset-20-3, "Auto", 2, orient+ROTATESPRITE_MAX);
+                        minitextshade(altHudLayout.inventoryAutoX+1, hudoffset-20-3+1, "Auto", 127, 4, POLYMOSTTRANS+orient+ROTATESPRITE_MAX);
+                    minitext(altHudLayout.inventoryAutoX, hudoffset-20-3, "Auto", 2, orient+ROTATESPRITE_MAX);
                 }
             }
 
             if (ud.hudontop == 1)
                 hudoffset += 40;
 
-            if (p->got_access&1) rotatesprite_althudr(39, hudoffset-43, sb15, 0, ACCESSCARD, 0, 0, 10+16+512);
-            if (p->got_access&4) rotatesprite_althudr(34, hudoffset-41, sb15, 0, ACCESSCARD, 0, 23, 10+16+512);
-            if (p->got_access&2) rotatesprite_althudr(29, hudoffset-39, sb15, 0, ACCESSCARD, 0, 21, 10+16+512);
+            if (p->got_access&1) rotatesprite_althudr(altHudLayout.accessRightX[0], hudoffset-43, sb15, 0, ACCESSCARD, 0, 0, 10+16+512);
+            if (p->got_access&4) rotatesprite_althudr(altHudLayout.accessRightX[1], hudoffset-41, sb15, 0, ACCESSCARD, 0, 23, 10+16+512);
+            if (p->got_access&2) rotatesprite_althudr(altHudLayout.accessRightX[2], hudoffset-39, sb15, 0, ACCESSCARD, 0, 21, 10+16+512);
         }
         else
         {
@@ -872,8 +1069,13 @@ void G_DrawStatusBar(int32_t snum)
 
                 minitext_yofs = 0;
             }
+
+            if (p->got_access&1) rotatesprite_fs(sbarxr(124), yofssh+sbary(200-23), sb15, 0, ACCESSCARD, 0, 0, 10+16+512);
+            if (p->got_access&4) rotatesprite_fs(sbarxr(110), yofssh+sbary(200-21), sb15, 0, ACCESSCARD, 0, 23, 10+16+512);
+            if (p->got_access&2) rotatesprite_fs(sbarxr(96), yofssh+sbary(200-19), sb15, 0, ACCESSCARD, 0, 21, 10+16+512);
         }
 
+        ud.statusbarscale = savedStatusBarScale;
         g_sbarPlayer = savedSbarPlayer;
         return;
     }
@@ -1112,6 +1314,7 @@ void G_DrawStatusBar(int32_t snum)
         }
     }
 
+    ud.statusbarscale = savedStatusBarScale;
     g_sbarPlayer = savedSbarPlayer;
 }
 

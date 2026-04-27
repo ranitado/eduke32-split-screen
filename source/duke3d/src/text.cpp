@@ -384,6 +384,11 @@ int32_t minitext_(int32_t x, int32_t y, const char *t, int32_t s, int32_t p, int
         z = sbarsc(z);
     }
 
+#ifdef SPLITSCREEN_MOD_HACKS
+    if ((G_HaveSplitScreen() || ud.screen_size == 4) && (sb & ROTATESPRITE_MAX))
+        sb &= ~RS_ALIGN_MASK;
+#endif
+
     sb &= (ROTATESPRITE_MAX-1)|RS_CENTERORIGIN;
     G_GetTextClipBounds(&x1, &y1, &x2, &y2);
 

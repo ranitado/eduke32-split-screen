@@ -92,7 +92,15 @@ void I_AdvanceTriggerClear(void)
 
 int32_t I_GeneralTrigger(void)
 {
-    return I_AdvanceTrigger() || I_ReturnTrigger() || I_EscapeTrigger()
+#if !defined GEKKO && !defined EDUKE32_TOUCH_DEVICES
+    int32_t const mouseAdvance = MOUSE_GetButtons() & M_LEFTBUTTON;
+#endif
+
+    return
+#if !defined GEKKO && !defined EDUKE32_TOUCH_DEVICES
+        mouseAdvance ||
+#endif
+        I_AdvanceTrigger() || I_ReturnTrigger() || I_EscapeTrigger()
 #if !defined GEKKO
         || BUTTON(gamefunc_Open)
 # if !defined EDUKE32_TOUCH_DEVICES

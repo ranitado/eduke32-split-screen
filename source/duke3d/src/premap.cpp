@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "menus.h"
 #include "savegame.h"
 #include "sbar.h"
+#include "splitscreen.h"
 
 #include "vfs.h"
 
@@ -607,6 +608,26 @@ void P_MoveToRandomSpawnPoint(int playerNum)
     auto &p = *g_player[playerNum].ps;
     int i = playerNum;
 
+    if (g_playerSpawnCnt <= 0)
+    {
+        if (p.cursectnum < 0)
+            updatesector(p.pos.x, p.pos.y, &p.cursectnum);
+
+        if (p.cursectnum < 0 && g_player[myconnectindex].ps != nullptr)
+        {
+            auto const &primary = *g_player[myconnectindex].ps;
+            p.opos = p.pos = primary.pos;
+            p.bobpos = p.pos.xy;
+            p.cursectnum = primary.cursectnum;
+            p.q16ang = primary.q16ang;
+        }
+
+        if ((unsigned)p.i < MAXSPRITES)
+            sprite[p.i].cstat = CSTAT_SPRITE_BLOCK + CSTAT_SPRITE_BLOCK_HITSCAN;
+
+        return;
+    }
+
     if ((g_netServer || ud.multimode > 1) && !(g_gametypeFlags[ud.coop] & GAMETYPE_FIXEDRESPAWN))
     {
         i = krand() % g_playerSpawnCnt;
@@ -637,6 +658,9 @@ void P_MoveToRandomSpawnPoint(int playerNum)
             }
         }
     }
+
+    if ((unsigned)i >= (unsigned)g_playerSpawnCnt)
+        i %= g_playerSpawnCnt;
 
     p.opos = p.pos = g_playerSpawnPoints[i].xyz;
 
@@ -695,14 +719,13 @@ void P_ResetMultiPlayer(int playerNum)
     auto &s = sprite[p.i];
     auto &a = actor[p.i];
 
-    vec3_t tmpvect = p.pos;
-
-    tmpvect.z += p.spritezoffset;
-
     P_MoveToRandomSpawnPoint(playerNum);
 
     a.bpos = p.opos = p.pos;
     p.bobpos = p.pos.xy;
+
+    vec3_t tmpvect = p.pos;
+    tmpvect.z += p.spritezoffset;
 
     s.xyz = p.pos;
 
@@ -1530,8 +1553,9 @@ static void G_CollectSpawnPoints(int gameMode)
         s.xrepeat  = 42;
         s.yrepeat  = 36;
 
-        s.cstat
-        = (pindex < (!g_fakeMultiMode ? numplayers : ud.multimode)) ? CSTAT_SPRITE_BLOCK + CSTAT_SPRITE_BLOCK_HITSCAN : CSTAT_SPRITE_INVISIBLE;
+        s.cstat = (!g_fakeMultiMode ? pindex < numplayers : G_IsSplitScreenPlayerActive(pindex))
+            ? CSTAT_SPRITE_BLOCK + CSTAT_SPRITE_BLOCK_HITSCAN
+            : CSTAT_SPRITE_INVISIBLE;
 
         auto &plr = g_player[pindex];
         auto &p   = *plr.ps;

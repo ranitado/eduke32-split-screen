@@ -50,6 +50,8 @@ apps/
 *.log
 *.cache
 *.cfg
+*.esv
+*.esv.addon
 settings.cfg
 grpfiles.cache
 textures

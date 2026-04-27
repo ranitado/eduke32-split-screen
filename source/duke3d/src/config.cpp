@@ -391,6 +391,7 @@ void CONFIG_SetDefaults(void)
     ud.config.JoystickViewCentering = CONFIG_CONTROLLER_VIEW_CENTERING_DEFAULT;
     ud.config.JoystickAimAssist = 1;
     ud.config.SplitScreenSeparateKeyboardMouse = 0;
+    ud.config.SplitScreenHudStyle = HUD_STYLE_SPLITSCREEN;
     for (int i = 0; i < MAXSPLITSCREENCONTROLLERPROFILES; ++i)
     {
         ud.config.SplitScreenJoystickAimWeight[i] = ud.config.JoystickAimWeight;
@@ -1290,10 +1291,14 @@ int CONFIG_ReadSetup(void)
     SCRIPT_GetNumber(ud.config.scripthandle, "Game Setup", "PerPlayerPickups", &ud.m_weaponsharing);
     ud.m_weaponsharing = ud.m_weaponsharing != 0;
     ud.weaponsharing = ud.m_weaponsharing;
+    SCRIPT_GetNumber(ud.config.scripthandle, "Game Setup", "HudStyle", &ud.config.SplitScreenHudStyle);
+    ud.config.SplitScreenHudStyle = clamp(ud.config.SplitScreenHudStyle, 0, HUD_STYLE_COUNT - 1);
 
     SCRIPT_GetNumber(ud.config.scripthandle, "Controls", "UseJoystick", &ud.setup.usejoystick);
     SCRIPT_GetNumber(ud.config.scripthandle, "Controls", "UseMouse", &ud.setup.usemouse);
     SCRIPT_GetNumber(ud.config.scripthandle, "Controls", "SeparateKeyboardMouseAndControllers", &ud.config.SplitScreenSeparateKeyboardMouse);
+    if (g_splitScreenResumeSeparateKeyboardMouse >= 0)
+        ud.config.SplitScreenSeparateKeyboardMouse = g_splitScreenResumeSeparateKeyboardMouse;
     // The split-screen mod has no visible "Use Controller" option, so avoid
     // trapping existing configs in keyboard/mouse-only mode.
     ud.setup.usejoystick = 1;
@@ -1506,6 +1511,7 @@ void CONFIG_WriteSetup(uint32_t flags)
 #endif
 
     SCRIPT_PutNumber(ud.config.scripthandle, "Game Setup", "PerPlayerPickups", ud.m_weaponsharing, FALSE, FALSE);
+    SCRIPT_PutNumber(ud.config.scripthandle, "Game Setup", "HudStyle", ud.config.SplitScreenHudStyle, FALSE, FALSE);
 
     if (ud.setup.usemouse)
     {

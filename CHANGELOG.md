@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4
+
+- Adds Extra Content support for Duke Caribbean, Duke It Out in D.C., and Nuclear Winter, with automatic relaunch into the selected content.
+- Adds drop-in/drop-out local split-screen players during gameplay.
+- Improves split-screen HUD handling, with Basic and Advanced HUD settings.
+- Other bug fixes and improvements.
+
+Note: Extra Content support requires the user to provide their own legal addon files. No commercial Duke Nukem 3D or addon data is included.
+
 ## v0.3
 
 - Fixed auto aim not working and configuration save issues.
