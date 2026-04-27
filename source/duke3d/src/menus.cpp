@@ -500,6 +500,7 @@ static MenuLink_t MEO_ADDON_EPISODE[MENU_ADDON_EPISODE_COUNT];
 static MenuEntry_t ME_ADDON_EPISODE[MENU_ADDON_EPISODE_COUNT];
 static int32_t g_addonEpisodeAvailable[MENU_ADDON_EPISODE_COUNT];
 static char g_addonEpisodeMessage[256];
+static int32_t g_addonMessageWaitForInputRelease = 0;
 static MenuLink_t MEO_EPISODE_USERMAP = { MENU_USERMAP, MA_Advance, };
 static MenuEntry_t ME_EPISODE_USERMAP = MAKE_MENUENTRY( "User Map", &MF_Redfont, &MEF_CenterMenu, &MEO_EPISODE_USERMAP, Link );
 static MenuEntry_t *MEL_EPISODE[MAXVOLUMES + MENU_ADDON_EPISODE_COUNT + 3]; // spacers, add-ons, and User Map
@@ -6902,6 +6903,8 @@ static void Menu_ChangingTo(Menu_t * m)
 
     case MENU_ADDONMESSAGE:
         m->parentID = g_previousMenu == MENU_EXTRACONTENT ? MENU_EXTRACONTENT : MENU_EPISODE;
+        g_addonMessageWaitForInputRelease = 1;
+        I_ClearAllInput();
         break;
 
     case MENU_USERMAP:
@@ -9266,6 +9269,18 @@ static void Menu_RunInput(Menu_t *cm)
         }
 
         case Message:
+            if (cm->menuID == MENU_ADDONMESSAGE && g_addonMessageWaitForInputRelease)
+            {
+                if (I_CheckAllInput() || I_AdvanceTrigger() || I_ReturnTrigger() || I_EscapeTrigger())
+                {
+                    I_ClearAllInput();
+                    Menu_PreInput(NULL);
+                    break;
+                }
+
+                g_addonMessageWaitForInputRelease = 0;
+            }
+
             if (I_ReturnTrigger() || Menu_RunInput_MouseReturn())
             {
                 I_ReturnTriggerClear();
