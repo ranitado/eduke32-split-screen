@@ -197,6 +197,13 @@ static void G_SetJoinedSplitScreenPlayerPosition(int32_t const playerNum, vec3_t
 
 static void G_MoveJoinedSplitScreenPlayerToCoopSpawn(int32_t const playerNum)
 {
+    if (g_playerSpawnCnt > 0)
+    {
+        auto const &primarySpawn = g_playerSpawnPoints[0];
+        G_SetJoinedSplitScreenPlayerPosition(playerNum, primarySpawn.xyz, primarySpawn.sect, primarySpawn.ang);
+        return;
+    }
+
     DukePlayer_t const * const pAnchor = g_player[myconnectindex].ps;
     if (pAnchor == nullptr || pAnchor->cursectnum < 0)
         return;
