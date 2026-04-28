@@ -234,6 +234,143 @@ static void CONFIG_SetJoystickAnalogAxisSensitivity(int i, float sens)
     ud.config.JoystickAnalogueSensitivity[i] = sens;
     CONTROL_SetAnalogAxisSensitivity(i, sens, controldevice_joystick);
 }
+
+static int CONFIG_ParseJoystickSensitivity(char const * const text, float * const value)
+{
+    if (text == nullptr || value == nullptr)
+        return 1;
+
+    char const *p = text;
+    while (*p == ' ' || *p == '\t')
+        ++p;
+
+    int32_t whole = 0;
+    int32_t frac = 0;
+    int32_t fracDivisor = 1;
+    int32_t digits = 0;
+
+    while (*p >= '0' && *p <= '9')
+    {
+        whole = whole * 10 + (*p - '0');
+        ++p;
+        ++digits;
+    }
+
+    if (*p == '.' || *p == ',')
+    {
+        ++p;
+        while (*p >= '0' && *p <= '9')
+        {
+            frac = frac * 10 + (*p - '0');
+            fracDivisor *= 10;
+            ++p;
+            ++digits;
+        }
+    }
+
+    while (*p == ' ' || *p == '\t')
+        ++p;
+
+    if (digits == 0 || *p != '\0')
+        return 1;
+
+    *value = (float)whole + ((float)frac / (float)fracDivisor);
+    return 0;
+}
+
+static void CONFIG_ReadJoystickSensitivity(char const * const section, char const * const key, float * const sensitivity)
+{
+    char tenthsKey[96];
+    int32_t tenths = 0;
+
+    if (sensitivity == nullptr)
+        return;
+
+    Bsnprintf(tenthsKey, sizeof(tenthsKey), "%sTenths", key);
+    if (SCRIPT_GetNumber(ud.config.scripthandle, section, tenthsKey, &tenths) == 0)
+    {
+        *sensitivity = clamp<int32_t>(tenths, 0, 1000) / 10.f;
+        return;
+    }
+
+    char const * const raw = SCRIPT_GetRaw(ud.config.scripthandle, section, key);
+    if (raw != nullptr && raw[0] != '\0')
+    {
+        float parsed = *sensitivity;
+        if (CONFIG_ParseJoystickSensitivity(raw, &parsed) == 0)
+        {
+            *sensitivity = parsed;
+            return;
+        }
+    }
+
+    char text[64];
+    if (SCRIPT_GetString(ud.config.scripthandle, section, key, text) == 0)
+    {
+        float parsed = *sensitivity;
+        if (CONFIG_ParseJoystickSensitivity(text, &parsed) == 0)
+            *sensitivity = parsed;
+    }
+}
+
+static void CONFIG_WriteJoystickSensitivity(char const * const section, char const * const key, float const sensitivity)
+{
+    char raw[32];
+    char tenthsKey[96];
+    int32_t const tenths = clamp<int32_t>(Blrintf(sensitivity * 10.f), 0, 1000);
+    Bsprintf(raw, "%d.%d", tenths / 10, klabs(tenths % 10));
+    SCRIPT_PutRaw(ud.config.scripthandle, section, key, raw);
+    Bsnprintf(tenthsKey, sizeof(tenthsKey), "%sTenths", key);
+    SCRIPT_PutNumber(ud.config.scripthandle, section, tenthsKey, tenths, FALSE, FALSE);
+}
+
+static int32_t CONFIG_FindAnalogAxisForFunction(int32_t const * const analogAxes, int32_t const function)
+{
+    for (int32_t axis = 0; axis < MAXJOYAXES; ++axis)
+        if (analogAxes[axis] == function)
+            return axis;
+
+    return -1;
+}
+
+static void CONFIG_ReadControllerAimSensitivity(char const * const keyPrefix, int32_t const * const analogAxes, float * const sensitivity)
+{
+    char key[96];
+    int32_t axis = CONFIG_FindAnalogAxisForFunction(analogAxes, analog_turning);
+
+    if (axis >= 0)
+    {
+        Bsnprintf(key, sizeof(key), "%sAimSensitivityX", keyPrefix);
+        CONFIG_ReadJoystickSensitivity("Controls", key, &sensitivity[axis]);
+    }
+
+    axis = CONFIG_FindAnalogAxisForFunction(analogAxes, analog_lookingupanddown);
+    if (axis >= 0)
+    {
+        Bsnprintf(key, sizeof(key), "%sAimSensitivityY", keyPrefix);
+        CONFIG_ReadJoystickSensitivity("Controls", key, &sensitivity[axis]);
+    }
+}
+
+static void CONFIG_WriteControllerAimSensitivity(char const * const keyPrefix, int32_t const * const analogAxes, float const * const sensitivity)
+{
+    char key[96];
+    int32_t axis = CONFIG_FindAnalogAxisForFunction(analogAxes, analog_turning);
+
+    if (axis >= 0)
+    {
+        Bsnprintf(key, sizeof(key), "%sAimSensitivityX", keyPrefix);
+        CONFIG_WriteJoystickSensitivity("Controls", key, sensitivity[axis]);
+    }
+
+    axis = CONFIG_FindAnalogAxisForFunction(analogAxes, analog_lookingupanddown);
+    if (axis >= 0)
+    {
+        Bsnprintf(key, sizeof(key), "%sAimSensitivityY", keyPrefix);
+        CONFIG_WriteJoystickSensitivity("Controls", key, sensitivity[axis]);
+    }
+}
+
 static void CONFIG_SetJoystickAnalogAxisInvert(int i, int invert)
 {
     ud.config.JoystickAnalogueInvert[i] = invert;
@@ -397,6 +534,7 @@ void CONFIG_SetDefaults(void)
         ud.config.SplitScreenJoystickAimWeight[i] = ud.config.JoystickAimWeight;
         ud.config.SplitScreenJoystickViewCentering[i] = ud.config.JoystickViewCentering;
         ud.config.SplitScreenJoystickAimAssist[i] = ud.config.JoystickAimAssist;
+        ud.config.SplitScreenJoystickRumble[i] = ud.config.controllerRumble;
     }
     ud.config.MouseBias       = 0;
     ud.config.MusicDevice     = ASS_AutoDetect;
@@ -630,7 +768,6 @@ void CONFIG_SetupJoystick(void)
     char str[80];
     char temp[80];
     int32_t scale;
-    double sens;
 
     if (ud.config.scripthandle < 0) return;
 
@@ -666,9 +803,7 @@ void CONFIG_SetupJoystick(void)
             ud.config.JoystickDigitalFunctions[i][1] = CONFIG_FunctionNameToNum(temp);
 
         Bsprintf(str,"ControllerAnalogSensitivity%d",i);
-        sens = ud.config.JoystickAnalogueSensitivity[i];
-        SCRIPT_GetDouble(ud.config.scripthandle, "Controls", str, &sens);
-        ud.config.JoystickAnalogueSensitivity[i] = sens;
+        CONFIG_ReadJoystickSensitivity("Controls", str, &ud.config.JoystickAnalogueSensitivity[i]);
 
         Bsprintf(str,"ControllerAnalogInvert%d",i);
         scale = ud.config.JoystickAnalogueInvert[i];
@@ -694,6 +829,9 @@ void CONFIG_SetupJoystick(void)
 
     SCRIPT_GetNumber(ud.config.scripthandle, "Controls", "ControllerAimAssist", &ud.config.JoystickAimAssist);
     ud.config.JoystickAimAssist = ud.config.JoystickAimAssist != 0;
+
+    SCRIPT_GetNumber(ud.config.scripthandle, "Controls", "ControllerRumble", &ud.config.controllerRumble);
+    ud.config.controllerRumble = ud.config.controllerRumble != 0;
 
     SCRIPT_GetNumber(ud.config.scripthandle, "Controls", "ViewCenteringDefaultMigrated", &g_controllerViewCenteringDefaultMigrated);
     g_controllerViewCenteringDefaultMigrated = g_controllerViewCenteringDefaultMigrated != 0;
@@ -734,9 +872,7 @@ void CONFIG_SetupJoystick(void)
                 ud.config.SplitScreenJoystickDigitalFunctions[profile][i][1] = CONFIG_FunctionNameToNum(temp);
 
             Bsprintf(str, "SplitScreenController%dAnalogSensitivity%d", controllerNumber, i);
-            sens = ud.config.SplitScreenJoystickAnalogueSensitivity[profile][i];
-            SCRIPT_GetDouble(ud.config.scripthandle, "Controls", str, &sens);
-            ud.config.SplitScreenJoystickAnalogueSensitivity[profile][i] = sens;
+            CONFIG_ReadJoystickSensitivity("Controls", str, &ud.config.SplitScreenJoystickAnalogueSensitivity[profile][i]);
 
             Bsprintf(str, "SplitScreenController%dAnalogInvert%d", controllerNumber, i);
             scale = ud.config.SplitScreenJoystickAnalogueInvert[profile][i];
@@ -765,9 +901,21 @@ void CONFIG_SetupJoystick(void)
         Bsprintf(str, "SplitScreenController%dAimAssist", controllerNumber);
         SCRIPT_GetNumber(ud.config.scripthandle, "Controls", str, &ud.config.SplitScreenJoystickAimAssist[profile]);
         ud.config.SplitScreenJoystickAimAssist[profile] = ud.config.SplitScreenJoystickAimAssist[profile] != 0;
+
+        Bsprintf(str, "SplitScreenController%dRumble", controllerNumber);
+        SCRIPT_GetNumber(ud.config.scripthandle, "Controls", str, &ud.config.SplitScreenJoystickRumble[profile]);
+        ud.config.SplitScreenJoystickRumble[profile] = ud.config.SplitScreenJoystickRumble[profile] != 0;
     }
 
     CONFIG_MigrateModernControllerDefaults();
+    CONFIG_ReadControllerAimSensitivity("Controller", ud.config.JoystickAnalogueAxes, ud.config.JoystickAnalogueSensitivity);
+
+    for (int controllerIndex = 1; controllerIndex < MAXSPLITSCREENCONTROLLERS; ++controllerIndex)
+    {
+        int const profile = controllerIndex - 1;
+        Bsprintf(str, "SplitScreenController%d", controllerIndex + 1);
+        CONFIG_ReadControllerAimSensitivity(str, ud.config.SplitScreenJoystickAnalogueAxes[profile], ud.config.SplitScreenJoystickAnalogueSensitivity[profile]);
+    }
 
     for (i=0; i<MAXJOYBUTTONSANDHATS; i++)
     {
@@ -963,6 +1111,7 @@ void CONFIG_SetSplitScreenGameControllerDefaults(int32_t const controllerIndex)
     CONFIG_SetSplitScreenJoystickAnalogAxisSensitivity(profile, CONTROLLER_AXIS_RIGHTX, CONFIG_CONTROLLER_AIM_SENS_X);
     CONFIG_SetSplitScreenJoystickAnalogAxisSensitivity(profile, CONTROLLER_AXIS_RIGHTY, CONFIG_CONTROLLER_AIM_SENS_Y);
     CONFIG_SetSplitScreenJoystickAnalogAxisInvert(profile, CONTROLLER_AXIS_RIGHTY, 0);
+    ud.config.SplitScreenJoystickRumble[profile] = 1;
 
     CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_A, 0, gamefunc_Jump);
     CONFIG_SetSplitScreenJoystickButtonFunction(profile, CONTROLLER_BUTTON_B, 0, gamefunc_Crouch);
@@ -1017,19 +1166,10 @@ static bool CONFIG_SplitControllerUsesOldModernDefaults(int const profile)
         && ud.config.SplitScreenJoystickDigitalFunctions[profile][CONTROLLER_AXIS_TRIGGERRIGHT][1] == gamefunc_Fire;
 }
 
-static bool CONFIG_IsLegacyAimSensitivity(float const sens)
-{
-    int const scaled = Blrintf(sens * 10.f);
-    return scaled == 14 || scaled == 20 || scaled == 22 || scaled == 23 || scaled == 25 || scaled == 30 || scaled == 35 || scaled == 40 || scaled == 42 || scaled == 43 || scaled == 45 || scaled == 47 || scaled == 50;
-}
-
 static void CONFIG_MigrateAimSensitivityDefaults(int32_t const * const analogAxes, float * const sensitivity)
 {
-    if (analogAxes[CONTROLLER_AXIS_RIGHTX] == analog_turning && CONFIG_IsLegacyAimSensitivity(sensitivity[CONTROLLER_AXIS_RIGHTX]))
-        sensitivity[CONTROLLER_AXIS_RIGHTX] = CONFIG_CONTROLLER_AIM_SENS_X;
-
-    if (analogAxes[CONTROLLER_AXIS_RIGHTY] == analog_lookingupanddown && CONFIG_IsLegacyAimSensitivity(sensitivity[CONTROLLER_AXIS_RIGHTY]))
-        sensitivity[CONTROLLER_AXIS_RIGHTY] = CONFIG_CONTROLLER_AIM_SENS_Y;
+    (void)analogAxes;
+    (void)sensitivity;
 }
 
 static void CONFIG_MigrateViewCenteringDefault(int32_t &viewCentering)
@@ -1457,7 +1597,13 @@ void CONFIG_WriteSetup(uint32_t flags)
     CONFIG_NormalizeControllerViewCenteringSettings();
 
     if (ud.config.scripthandle < 0)
-        ud.config.scripthandle = SCRIPT_Init(g_setupFileName);
+    {
+        if (buildvfs_exists(g_setupFileName))
+            ud.config.scripthandle = SCRIPT_Load(g_setupFileName);
+
+        if (ud.config.scripthandle < 0)
+            ud.config.scripthandle = SCRIPT_Init(g_setupFileName);
+    }
 
     SCRIPT_PutNumber(ud.config.scripthandle, "Misc", "Executions", ud.executions, FALSE, FALSE);
 
@@ -1488,6 +1634,7 @@ void CONFIG_WriteSetup(uint32_t flags)
     {
         SCRIPT_Save(ud.config.scripthandle, g_setupFileName);
         SCRIPT_Free(ud.config.scripthandle);
+        ud.config.scripthandle = -1;
         return;
     }
 
@@ -1527,7 +1674,8 @@ void CONFIG_WriteSetup(uint32_t flags)
         }
     }
 
-    if (ud.setup.usejoystick)
+    // Split-screen gamepads can be active even when the legacy joystick flag is off.
+    // Always persist controller mappings and analog settings so player 1 changes survive restart/relaunch.
     {
         for (int dummy=0; dummy<MAXJOYBUTTONSANDHATS; dummy++)
         {
@@ -1549,7 +1697,7 @@ void CONFIG_WriteSetup(uint32_t flags)
             SCRIPT_PutString(ud.config.scripthandle, "Controls", buf, CONFIG_FunctionNumToName(ud.config.JoystickDigitalFunctions[dummy][1]));
 
             Bsprintf(buf, "ControllerAnalogSensitivity%d", dummy);
-            SCRIPT_PutDouble(ud.config.scripthandle, "Controls", buf, ud.config.JoystickAnalogueSensitivity[dummy], FALSE);
+            CONFIG_WriteJoystickSensitivity("Controls", buf, ud.config.JoystickAnalogueSensitivity[dummy]);
 
             Bsprintf(buf, "ControllerAnalogInvert%d", dummy);
             SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, ud.config.JoystickAnalogueInvert[dummy], FALSE, FALSE);
@@ -1564,6 +1712,8 @@ void CONFIG_WriteSetup(uint32_t flags)
         SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "ControllerAimWeight", ud.config.JoystickAimWeight, FALSE, FALSE);
         SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "ControllerViewCentering", ud.config.JoystickViewCentering, FALSE, FALSE);
         SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "ControllerAimAssist", ud.config.JoystickAimAssist, FALSE, FALSE);
+        SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "ControllerRumble", ud.config.controllerRumble, FALSE, FALSE);
+        CONFIG_WriteControllerAimSensitivity("Controller", ud.config.JoystickAnalogueAxes, ud.config.JoystickAnalogueSensitivity);
     }
 
     for (int controllerIndex = 1; controllerIndex < MAXSPLITSCREENCONTROLLERS; ++controllerIndex)
@@ -1592,7 +1742,7 @@ void CONFIG_WriteSetup(uint32_t flags)
             SCRIPT_PutString(ud.config.scripthandle, "Controls", buf, CONFIG_FunctionNumToName(ud.config.SplitScreenJoystickDigitalFunctions[profile][dummy][1]));
 
             Bsprintf(buf, "SplitScreenController%dAnalogSensitivity%d", controllerNumber, dummy);
-            SCRIPT_PutDouble(ud.config.scripthandle, "Controls", buf, ud.config.SplitScreenJoystickAnalogueSensitivity[profile][dummy], FALSE);
+            CONFIG_WriteJoystickSensitivity("Controls", buf, ud.config.SplitScreenJoystickAnalogueSensitivity[profile][dummy]);
 
             Bsprintf(buf, "SplitScreenController%dAnalogInvert%d", controllerNumber, dummy);
             SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, ud.config.SplitScreenJoystickAnalogueInvert[profile][dummy], FALSE, FALSE);
@@ -1612,6 +1762,12 @@ void CONFIG_WriteSetup(uint32_t flags)
 
         Bsprintf(buf, "SplitScreenController%dAimAssist", controllerNumber);
         SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, ud.config.SplitScreenJoystickAimAssist[profile], FALSE, FALSE);
+
+        Bsprintf(buf, "SplitScreenController%dRumble", controllerNumber);
+        SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, ud.config.SplitScreenJoystickRumble[profile], FALSE, FALSE);
+
+        Bsprintf(buf, "SplitScreenController%d", controllerNumber);
+        CONFIG_WriteControllerAimSensitivity(buf, ud.config.SplitScreenJoystickAnalogueAxes[profile], ud.config.SplitScreenJoystickAnalogueSensitivity[profile]);
     }
 
     SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "UseJoystick", ud.setup.usejoystick, FALSE, FALSE);
@@ -1674,7 +1830,10 @@ void CONFIG_WriteSetup(uint32_t flags)
     SCRIPT_Save(ud.config.scripthandle, g_setupFileName);
 
     if ((flags & 2) == 0)
+    {
         SCRIPT_Free(ud.config.scripthandle);
+        ud.config.scripthandle = -1;
+    }
 
     LOG_F(INFO, "Wrote %s",g_setupFileName);
     CONFIG_WriteSettings();

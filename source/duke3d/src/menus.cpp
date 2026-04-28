@@ -1982,6 +1982,8 @@ static int32_t Menu_RelaunchWithAddon(int32_t const addonNum, char const * const
                   extraArgs != nullptr && extraArgs[0] != '\0' ? " " : "",
                   extraArgs != nullptr ? extraArgs : "");
 
+    CONFIG_WriteSetup(0);
+
     S_StopMusic();
     S_MusicShutdown();
     S_SoundShutdown();
@@ -2374,6 +2376,12 @@ static int32_t *Menu_GetSelectedJoystickAimAssist(void)
     return controllerIndex == 0 ? &ud.config.JoystickAimAssist : &ud.config.SplitScreenJoystickAimAssist[controllerIndex - 1];
 }
 
+static int32_t *Menu_GetSelectedJoystickRumble(void)
+{
+    int const controllerIndex = Menu_GetSelectedJoystickController();
+    return controllerIndex == 0 ? &ud.config.controllerRumble : &ud.config.SplitScreenJoystickRumble[controllerIndex - 1];
+}
+
 static int Menu_IsEditingPrimaryJoystick(void)
 {
     return Menu_GetSelectedJoystickController() == 0;
@@ -2394,6 +2402,7 @@ static void Menu_UpdateJoystickAimEntries(void)
     ME_JOYSTICK_HORIZONTALAIMSENSITIVITY.flags |= MEF_Hidden;
     ME_JOYSTICK_VERTICALAIMSENSITIVITY.flags |= MEF_Hidden;
     ME_JOYSTICK_LOOKINVERT.flags |= MEF_Hidden;
+    MEO_JOYSTICK_RUMBLE.data = Menu_GetSelectedJoystickRumble();
 
     g_turnAxis = g_lookAxis = -1;
 
@@ -5682,6 +5691,13 @@ static void Menu_EntryOptionDidModify(MenuEntry_t *entry)
         else
             Menu_ApplySelectedPlayerSetup();
     }
+    else if (entry == &ME_JOYSTICK_RUMBLE ||
+             entry == &ME_JOYSTICK_LOOKINVERT ||
+             entry == &ME_JOYSTICK_AIM_ASSIST ||
+             entry == &ME_JOYSTICK_VIEW_CENTERING)
+    {
+        CONFIG_WriteSetup(0);
+    }
     else if (entry == &ME_DISPLAYSETUP_UPSCALING)
     {
         if (in3dmode())
@@ -5803,6 +5819,12 @@ static int32_t Menu_EntryRangeFloatDidModify(MenuEntry_t *entry)
     {
         videoSetPalette(ud.brightness>>2, g_player[myconnectindex].ps->palette, 0);
     }
+    else if (entry == &ME_JOYSTICKAXIS_SENSITIVITY ||
+             entry == &ME_JOYSTICK_HORIZONTALAIMSENSITIVITY ||
+             entry == &ME_JOYSTICK_VERTICALAIMSENSITIVITY)
+    {
+        CONFIG_WriteSetup(0);
+    }
 
     return 0;
 }
@@ -5862,7 +5884,11 @@ static void Menu_RefreshSaveMenuAfterSave(void)
 
 static int32_t Menu_GetSavePlayerCount(void)
 {
+#ifdef SPLITSCREEN_MOD_HACKS
+    return clamp(G_GetSplitScreenPlayerCount(), 1, MAXSPLITSCREENCONTROLLERS);
+#else
     return clamp(ud.multimode, 1, MAXSPLITSCREENCONTROLLERS);
+#endif
 }
 
 static void Menu_BuildAutoSaveName(char * const name, size_t const nameSize)
@@ -6903,6 +6929,7 @@ static void Menu_ChangingTo(Menu_t * m)
 
     case MENU_ADDONMESSAGE:
         m->parentID = g_previousMenu == MENU_EXTRACONTENT ? MENU_EXTRACONTENT : MENU_EPISODE;
+        ((MenuMessage_t *)m->object)->linkID = m->parentID;
         g_addonMessageWaitForInputRelease = 1;
         I_ClearAllInput();
         break;
@@ -8705,7 +8732,7 @@ static int32_t Menu_RunInput_EntryOption_Movement(MenuEntry_t *entry, MenuOption
 
 static int32_t Menu_RunInput_EntryOption_Activate(MenuEntry_t *entry, MenuOption_t *object)
 {
-    if (object->options->features & 2)
+    if ((object->options->features & 2) || (object->options->numOptions > 0 && object->options->numOptions <= 5))
         return Menu_RunInput_EntryOption_Movement(entry, object, MM_Right);
     else
     {

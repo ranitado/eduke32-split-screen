@@ -214,7 +214,7 @@ static int32_t G_GetStatusBarScaleForPlayer(int32_t const playerNum, int32_t con
 
 static AltHudLayout_t G_GetAltHudLayoutForPlayer(int32_t const playerNum)
 {
-    AltHudLayout_t layout = { 2, 40, 62, 105, 57, 20, { 39, 34, 29 }, 129, 160, 152, 156, 152, 147 };
+    AltHudLayout_t layout = { 2, 40, 62, 105, 57, 20, { 39, 34, 29 }, 129, 108, 152, 98, 98, 90 };
 
 #ifdef SPLITSCREEN_MOD_HACKS
     splitscreen_viewport_t viewport {};
@@ -229,11 +229,11 @@ static AltHudLayout_t G_GetAltHudLayoutForPlayer(int32_t const playerNum)
         layout.armorIconX = 55;
         layout.armorNumX = 94;
         layout.inventoryIconX = 116;
-        layout.inventoryPercentX = 146;
+        layout.inventoryPercentX = 148;
         layout.inventoryAmountX = 139;
-        layout.inventoryOnX = 143;
-        layout.inventoryOffX = 141;
-        layout.inventoryAutoX = 136;
+        layout.inventoryOnX = 139;
+        layout.inventoryOffX = 139;
+        layout.inventoryAutoX = 78;
 
         layout.ammoIconRightX = 52;
         layout.ammoNumRightX = 15;
@@ -1049,7 +1049,7 @@ void G_DrawStatusBar(int32_t snum)
                 orient |= ROTATESPRITE_MAX;
 
                 minitext_yofs = yofssh;
-                minitext(292-30-o, 190, "%", 6, orient);
+                minitext(247-30-o, 190, "%", 6, orient);
 
                 i = G_GetInvAmount(p);
                 j = G_GetInvOn(p);
@@ -1059,13 +1059,13 @@ void G_DrawStatusBar(int32_t snum)
                 if (!WW2GI)
                 {
                     if (j > 0)
-                        minitext(288-30-o, 180, "On", 0, orient);
+                        minitext(238-30-o, 180, "On", 0, orient);
                     else if ((uint32_t) j != 0x80000000)
-                        minitext(284-30-o, 180, "Off", 2, orient);
+                        minitext(240-30-o, 180, "Off", 2, orient);
                 }
 
                 if (p->inven_icon >= ICON_SCUBA)
-                    minitext(284-35-o, 180, "Auto", 2, orient);
+                    minitext(237-35-o, 180, "Auto", 2, orient);
 
                 minitext_yofs = 0;
             }
@@ -1294,16 +1294,16 @@ void G_DrawStatusBar(int32_t snum)
                 i = ((unsigned) p->inven_icon < ICON_MAX) ? item_icons[p->inven_icon] : -1;
                 // XXX: i < 0?
                 rotatesprite_fs(sbarx(231-o), sbary(SBY+13), sb16, 0, i, 0, 0, 10+16+permbit);
-                minitext(292-30-o, SBY+24, "%", 6, 10+16+permbit + ROTATESPRITE_MAX);
-                if (p->inven_icon >= ICON_SCUBA) minitext(284-35-o, SBY+14, "Auto", 2, 10+16+permbit + ROTATESPRITE_MAX);
+                minitext(247-30-o, SBY+24, "%", 6, 10+16+permbit + ROTATESPRITE_MAX);
+                if (p->inven_icon >= ICON_SCUBA) minitext(237-35-o, SBY+14, "Auto", 2, 10+16+permbit + ROTATESPRITE_MAX);
             }
 
             if (u&(2048+4096) && !WW2GI)
             {
                 j = G_GetInvOn(p);
 
-                if (j > 0) minitext(288-30-o, SBY+14, "On", 0, 10+16+permbit  + ROTATESPRITE_MAX);
-                else if ((uint32_t) j != 0x80000000) minitext(284-30-o, SBY+14, "Off", 2, 10+16+permbit + ROTATESPRITE_MAX);
+                if (j > 0) minitext(238-30-o, SBY+14, "On", 0, 10+16+permbit  + ROTATESPRITE_MAX);
+                else if ((uint32_t) j != 0x80000000) minitext(240-30-o, SBY+14, "Off", 2, 10+16+permbit + ROTATESPRITE_MAX);
             }
 
             if (u&8192)

@@ -237,6 +237,7 @@ typedef struct {
         int32_t JoystickViewCentering;
         int32_t JoystickAimAssist;
         int32_t controllerRumble;
+        int32_t SplitScreenJoystickRumble[MAXSPLITSCREENCONTROLLERPROFILES];
         int32_t SplitScreenSeparateKeyboardMouse;
         int32_t SplitScreenHudStyle;
         int32_t SplitScreenPlayerAutoAim[MAXSPLITSCREENCONTROLLERS];

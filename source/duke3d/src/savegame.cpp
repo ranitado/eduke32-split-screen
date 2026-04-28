@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "prlights.h"
 #include "md4.h"
 #include "savegame.h"
+#include "splitscreen.h"
 
 #include "vfs.h"
 
@@ -459,6 +460,15 @@ static bool G_IsSupportedLocalSavePlayerCount(int32_t const playerCount)
 static bool G_CanUseLocalSavePlayerCount(int32_t const playerCount)
 {
     return !g_netServer && !g_netClient && G_IsSupportedLocalSavePlayerCount(playerCount);
+}
+
+static int32_t G_GetCurrentLocalSavePlayerCount(void)
+{
+#ifdef SPLITSCREEN_MOD_HACKS
+    return clamp(G_GetSplitScreenPlayerCount(), 1, MAXSPLITSCREENCONTROLLERS);
+#else
+    return clamp(ud.multimode, 1, MAXPLAYERS);
+#endif
 }
 
 static void G_ApplyLocalSavePlayerCount(int32_t const playerCount)
@@ -1046,15 +1056,16 @@ int32_t G_LoadPlayerMaybeMulti(savebrief_t & sv)
 void G_SavePlayerMaybeMulti(savebrief_t & sv, bool isAutoSave)
 {
     CONFIG_WriteSetup(2);
+    int32_t const savePlayerCount = G_GetCurrentLocalSavePlayerCount();
 
-    if (g_netServer || g_netClient || (ud.multimode > 1 && !G_CanUseLocalSavePlayerCount(ud.multimode)))
+    if (g_netServer || g_netClient || (savePlayerCount > 1 && !G_CanUseLocalSavePlayerCount(savePlayerCount)))
     {
         Bstrcpy(apStrings[QUOTE_RESERVED4], "Multiplayer Saving Not Yet Supported");
         P_DoQuote(QUOTE_RESERVED4, g_player[myconnectindex].ps);
     }
     else
     {
-        G_ApplyLocalSavePlayerCount(ud.multimode);
+        G_ApplyLocalSavePlayerCount(savePlayerCount);
         G_SavePlayer(sv, isAutoSave);
     }
 }

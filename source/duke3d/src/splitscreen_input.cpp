@@ -53,7 +53,7 @@ constexpr float AIM_REFERENCE_FPS = 60.f;
 constexpr int MAX_LOCAL_PLAYERS = 4;
 constexpr uint8_t WEAPON_REPEAT_INITIAL_DELAY = 12;
 constexpr uint8_t WEAPON_REPEAT_INTERVAL = 4;
-constexpr uint8_t WEAPON_PULSE_FRAMES = 3;
+constexpr uint8_t WEAPON_PULSE_FRAMES = 2;
 constexpr uint8_t PAUSE_PULSE_FRAMES = 3;
 
 enum split_config_menu_page_t

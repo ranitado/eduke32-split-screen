@@ -1,0 +1,4 @@
+tilefromtexture 6143 {
+    file "armorbox__splitscreen_tile30.png"
+    alphacut 128
+}

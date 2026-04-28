@@ -108,6 +108,12 @@ static int32_t G_GetJoystickAimAssistForPlayer(int32_t const playerNum)
     return profile == 0 ? ud.config.JoystickAimAssist : ud.config.SplitScreenJoystickAimAssist[profile - 1];
 }
 
+static int32_t G_GetJoystickRumbleForPlayer(int32_t const playerNum)
+{
+    int const profile = G_GetSplitScreenControllerProfileForPlayer(playerNum);
+    return profile == 0 ? ud.config.controllerRumble : ud.config.SplitScreenJoystickRumble[profile - 1];
+}
+
 static int32_t G_FindJoystickAnalogAxisForPlayer(int32_t const playerNum, int32_t const analogFunction, int32_t const fallbackAxis)
 {
     int const profile = G_GetSplitScreenControllerProfileForPlayer(playerNum);
@@ -144,7 +150,7 @@ static void P_AddForceFeedbackForPlayer(int32_t const playerNum, int const lo, i
 #ifdef SPLITSCREEN_MOD_HACKS
     if (G_HaveSplitScreen() && playerNum >= 0)
     {
-        if (!ud.config.controllerRumble)
+        if (!G_GetJoystickRumbleForPlayer(playerNum))
             return;
 
         int const gamepadIndex = G_GetSplitScreenGamepadIndexForPlayer(playerNum);
@@ -798,7 +804,7 @@ static int Proj_MaybeDamageCF2(int const spriteNum, int const zvel, int const hi
 
 static void P_DoWeaponRumble(int playerNum)
 {
-    if (!ud.config.controllerRumble)
+    if (!G_GetJoystickRumbleForPlayer(playerNum))
         return;
 
     auto const pPlayer = g_player[playerNum].ps;

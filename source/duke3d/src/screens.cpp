@@ -288,9 +288,74 @@ static int32_t gtextsc(int32_t sc)
 
 ////////// DISPLAYREST //////////
 
+static int32_t G_GetWideSplitScreenCameraViewport(splitscreen_viewport_t * const viewport)
+{
+#ifdef SPLITSCREEN_MOD_HACKS
+    if (viewport == nullptr || !G_HaveSplitScreen())
+        return 0;
+
+    int const viewIndex = G_GetSplitScreenViewForPlayer(screenpeek);
+    if (viewIndex < 0 || G_GetSplitScreenViewport(viewIndex, viewport) != 0)
+        return 0;
+
+    return viewport->width > viewport->height * 2;
+#else
+    UNREFERENCED_PARAMETER(viewport);
+    return 0;
+#endif
+}
+
+static void G_DrawWideSplitScreenCameraSprite(splitscreen_viewport_t const &viewport, int32_t const x, int32_t const y,
+                                              int32_t const z, int16_t const a, int16_t const picnum,
+                                              int8_t const dashade, char const dapalnum, int32_t const dastat)
+{
+    int32_t const scaleToHeight = divscale16(viewport.height, 200);
+    int32_t const virtualWidth = mulscale16(320 << 16, scaleToHeight);
+    int32_t const originX = (viewport.x << 16) + (((viewport.width << 16) - virtualWidth) >> 1);
+    int32_t const originY = viewport.y << 16;
+    int32_t const xFull = x < 0 ? -(klabs(x) << 16) : x << 16;
+    int32_t const sx = originX + mulscale16(xFull, scaleToHeight);
+    int32_t const sy = originY + mulscale16(y << 16, scaleToHeight);
+    int32_t const sz = mulscale16(z, scaleToHeight);
+
+    rotatesprite(sx, sy, sz, a, picnum, dashade, dapalnum, dastat & ~RS_AUTO,
+                 viewport.x, viewport.y, viewport.x + viewport.width - 1, viewport.y + viewport.height - 1);
+}
+
+static int32_t G_DrawWideSplitScreenCameraText(int16_t const i)
+{
+    splitscreen_viewport_t viewport {};
+    if (!G_GetWideSplitScreenCameraViewport(&viewport))
+        return 0;
+
+    if (!T1(i))
+    {
+        G_DrawWideSplitScreenCameraSprite(viewport, 24, 33, 65536L, 0, CAMCORNER, 0, 0, 2);
+        G_DrawWideSplitScreenCameraSprite(viewport, 320-26, 34, 65536L, 0, CAMCORNER+1, 0, 0, 2);
+        G_DrawWideSplitScreenCameraSprite(viewport, 22, 163, 65536L, 512, CAMCORNER+1, 0, 0, 2+4);
+        G_DrawWideSplitScreenCameraSprite(viewport, 310-10, 163, 65536L, 512, CAMCORNER+1, 0, 0, 2);
+
+        if ((int32_t) totalclock&16)
+            G_DrawWideSplitScreenCameraSprite(viewport, 46, 32, 65536L, 0, CAMLIGHT, 0, 0, 2);
+    }
+    else
+    {
+        int32_t flipbits = ((int32_t) totalclock<<1)&48;
+
+        for (bssize_t x=-64; x<394; x+=64)
+            for (bssize_t y=0; y<200; y+=64)
+                G_DrawWideSplitScreenCameraSprite(viewport, x, y, 65536L, 0, STATIC, 0, 0, 2+flipbits);
+    }
+
+    return 1;
+}
+
 static void G_DrawCameraText(int16_t i)
 {
     if (VM_OnEvent(EVENT_DISPLAYCAMERAOSD, i, screenpeek) != 0)
+        return;
+
+    if (G_DrawWideSplitScreenCameraText(i))
         return;
 
     if (!T1(i))
@@ -564,6 +629,8 @@ static int32_t G_GetSplitScreenInvOn(DukePlayer_t const * const pPlayer)
 
 static void G_DrawSplitScreenMiniHud(int32_t const playerNum, splitscreen_viewport_t const &viewport)
 {
+    static constexpr int32_t SPLITSCREEN_ARMORBOX = 6143;
+
     auto const pPlayer = g_player[playerNum].ps;
     if (pPlayer == nullptr)
         return;
@@ -584,14 +651,19 @@ static void G_DrawSplitScreenMiniHud(int32_t const playerNum, splitscreen_viewpo
     ammoWeapon = clamp<int>(ammoWeapon, 0, MAX_WEAPONS - 1);
 
     int32_t const healthBoxX = G_ScaleSplitScreenHudCoord(viewport.x, 5, hudScale);
-    int32_t const ammoBoxX = G_ScaleSplitScreenHudCoord(viewport.x, 37, hudScale);
+    int32_t const armorBoxX = G_ScaleSplitScreenHudCoord(viewport.x, 37, hudScale);
+    int32_t const ammoBoxX = G_ScaleSplitScreenHudCoord(viewport.x, 69, hudScale);
     int32_t const textNudgeX = -mulscale16(2 << 16, hudScale);
     int32_t const healthTextX = G_ScaleSplitScreenHudCoord(viewport.x, 20, hudScale) + textNudgeX;
-    int32_t const ammoTextX = G_ScaleSplitScreenHudCoord(viewport.x, 53, hudScale) + textNudgeX;
+    int32_t const armorTextX = G_ScaleSplitScreenHudCoord(viewport.x, 53, hudScale) + textNudgeX;
+    int32_t const ammoTextX = G_ScaleSplitScreenHudCoord(viewport.x, 85, hudScale) + textNudgeX;
     int32_t const textY = G_ScaleSplitScreenHudY(viewport, 183, hudScale);
 
     rotatesprite(healthBoxX, baseY, hudScale, 0, HEALTHBOX, 0, 21, RS_TOPLEFT, x1, y1, x2, y2);
     G_DrawSplitScreenHudNumber(healthTextX, textY, health, -16, 0, x1, y1, x2, y2, hudScale);
+
+    rotatesprite(armorBoxX, baseY, hudScale, 0, SPLITSCREEN_ARMORBOX, 0, 21, RS_TOPLEFT, x1, y1, x2, y2);
+    G_DrawSplitScreenHudNumber(armorTextX, textY, pPlayer->inv_amount[GET_SHIELD], -16, 0, x1, y1, x2, y2, hudScale);
 
     rotatesprite(ammoBoxX, baseY, hudScale, 0, AMMOBOX, 0, 21, RS_TOPLEFT, x1, y1, x2, y2);
     G_DrawSplitScreenHudNumber(ammoTextX, textY, pPlayer->ammo_amount[ammoWeapon], -16, 0, x1, y1, x2, y2, hudScale);
@@ -601,10 +673,10 @@ static void G_DrawSplitScreenMiniHud(int32_t const playerNum, splitscreen_viewpo
         static int32_t itemIcons[ICON_MAX] = { -1, FIRSTAID_ICON, STEROIDS_ICON, HOLODUKE_ICON,
             JETPACK_ICON, HEAT_ICON, AIRTANK_ICON, BOOT_ICON };
 
-        int32_t const inventoryBoxX = G_ScaleSplitScreenHudCoord(viewport.x, 69, hudScale);
-        int32_t const inventoryIconX = G_ScaleSplitScreenHudCoord(viewport.x, 73, hudScale);
+        int32_t const inventoryBoxX = G_ScaleSplitScreenHudCoord(viewport.x, 101, hudScale);
+        int32_t const inventoryIconX = G_ScaleSplitScreenHudCoord(viewport.x, 105, hudScale);
         int32_t const inventoryIconY = G_ScaleSplitScreenHudY(viewport, 179, hudScale);
-        int32_t const inventoryAmountX = G_ScaleSplitScreenHudCoord(viewport.x, 96, hudScale) + textNudgeX;
+        int32_t const inventoryAmountX = G_ScaleSplitScreenHudCoord(viewport.x, 127, hudScale) + textNudgeX;
         int32_t const inventoryAmountY = G_ScaleSplitScreenHudY(viewport, 188, hudScale);
         int32_t const itemTile = ((unsigned)pPlayer->inven_icon < ICON_MAX) ? itemIcons[pPlayer->inven_icon] : -1;
 
@@ -621,16 +693,16 @@ static void G_DrawSplitScreenMiniHud(int32_t const playerNum, splitscreen_viewpo
 
         int32_t const invOn = G_GetSplitScreenInvOn(pPlayer);
         if (pPlayer->inven_icon >= ICON_SCUBA)
-            G_DrawSplitScreenHudMiniText(viewport, 86, 179, "Auto", 2, x1, y1, x2, y2, hudScale);
+            G_DrawSplitScreenHudMiniText(viewport, 118, 179, "Auto", 2, x1, y1, x2, y2, hudScale);
         else if (invOn > 0)
-            G_DrawSplitScreenHudMiniText(viewport, 92, 179, "On", 0, x1, y1, x2, y2, hudScale);
+            G_DrawSplitScreenHudMiniText(viewport, 120, 179, "On", 0, x1, y1, x2, y2, hudScale);
         else if ((uint32_t)invOn != 0x80000000)
-            G_DrawSplitScreenHudMiniText(viewport, 89, 179, "Off", 2, x1, y1, x2, y2, hudScale);
+            G_DrawSplitScreenHudMiniText(viewport, 120, 179, "Off", 2, x1, y1, x2, y2, hudScale);
     }
 
     int32_t const accessScale = mulscale16(32768, hudScale);
     int32_t const accessSpacing = mulscale16(14 << 16, hudScale);
-    int32_t accessX = G_ScaleSplitScreenHudRightSprite(viewport, 10, hudScale, accessScale, ACCESSCARD);
+    int32_t accessX = G_ScaleSplitScreenHudRightSprite(viewport, 6, hudScale, accessScale, ACCESSCARD);
 
     if (pPlayer->got_access & 2)
     {
@@ -3182,12 +3254,12 @@ void G_BonusScreen(int32_t bonusonly)
                         else
                         {
                             Bsprintf(tempbuf, "%d", max<int32_t>(G_GetBonusMaxActorsKilled() - G_GetBonusActorsKilled(), 0));
-                            gametext_number(142, rowEnemiesLeftY, tempbuf);
+                            G_DrawBonusTableNumberRight(154, rowEnemiesLeftY, tempbuf, MF_Bluefont.pal);
                         }
 
                         gametext(labelX, rowSecretsLeftY, "Secrets Left:");
                         Bsprintf(tempbuf, "%d", max<int32_t>(G_GetBonusMaxSecretRooms() - G_GetBonusSecretRooms(), 0));
-                        gametext_number(142, rowSecretsLeftY, tempbuf);
+                        G_DrawBonusTableNumberRight(154, rowSecretsLeftY, tempbuf, MF_Bluefont.pal);
 
                         yy = rowSecretsLeftY + 10;
                     }
