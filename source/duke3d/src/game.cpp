@@ -72,6 +72,7 @@ static void G_LoadSplitScreenAssetDefinitions(void)
     {
         "splitscreen_logo.def",
         "splitscreen_rpg.def",
+        "splitscreen_hud.def",
     };
 
     int const bakpathsearchmode = pathsearchmode;
