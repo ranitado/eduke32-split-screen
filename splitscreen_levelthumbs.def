@@ -1,197 +1,197 @@
 // Auto-generated split-screen level thumbnails
 // Tile formula: base game 20000 + episode*16 + level, D.C. 20080 + level, Nuclear Winter 20100 + level, Caribbean 20120 + level
 tilefromtexture 20000 {
-    file "levelthumbs/levelthumb_a0_e1_l01.png"
+    file "levelthumb_a0_e1_l01.png"
 }
 tilefromtexture 20001 {
-    file "levelthumbs/levelthumb_a0_e1_l02.png"
+    file "levelthumb_a0_e1_l02.png"
 }
 tilefromtexture 20002 {
-    file "levelthumbs/levelthumb_a0_e1_l03.png"
+    file "levelthumb_a0_e1_l03.png"
 }
 tilefromtexture 20003 {
-    file "levelthumbs/levelthumb_a0_e1_l04.png"
+    file "levelthumb_a0_e1_l04.png"
 }
 tilefromtexture 20004 {
-    file "levelthumbs/levelthumb_a0_e1_l05.png"
+    file "levelthumb_a0_e1_l05.png"
 }
 tilefromtexture 20005 {
-    file "levelthumbs/levelthumb_a0_e1_l06.png"
+    file "levelthumb_a0_e1_l06.png"
 }
 tilefromtexture 20006 {
-    file "levelthumbs/levelthumb_a0_e1_l07.png"
+    file "levelthumb_a0_e1_l07.png"
 }
 tilefromtexture 20016 {
-    file "levelthumbs/levelthumb_a0_e2_l01.png"
+    file "levelthumb_a0_e2_l01.png"
 }
 tilefromtexture 20017 {
-    file "levelthumbs/levelthumb_a0_e2_l02.png"
+    file "levelthumb_a0_e2_l02.png"
 }
 tilefromtexture 20018 {
-    file "levelthumbs/levelthumb_a0_e2_l03.png"
+    file "levelthumb_a0_e2_l03.png"
 }
 tilefromtexture 20019 {
-    file "levelthumbs/levelthumb_a0_e2_l04.png"
+    file "levelthumb_a0_e2_l04.png"
 }
 tilefromtexture 20020 {
-    file "levelthumbs/levelthumb_a0_e2_l05.png"
+    file "levelthumb_a0_e2_l05.png"
 }
 tilefromtexture 20021 {
-    file "levelthumbs/levelthumb_a0_e2_l06.png"
+    file "levelthumb_a0_e2_l06.png"
 }
 tilefromtexture 20022 {
-    file "levelthumbs/levelthumb_a0_e2_l07.png"
+    file "levelthumb_a0_e2_l07.png"
 }
 tilefromtexture 20023 {
-    file "levelthumbs/levelthumb_a0_e2_l08.png"
+    file "levelthumb_a0_e2_l08.png"
 }
 tilefromtexture 20024 {
-    file "levelthumbs/levelthumb_a0_e2_l09.png"
+    file "levelthumb_a0_e2_l09.png"
 }
 tilefromtexture 20025 {
-    file "levelthumbs/levelthumb_a0_e2_l10.png"
+    file "levelthumb_a0_e2_l10.png"
 }
 tilefromtexture 20026 {
-    file "levelthumbs/levelthumb_a0_e2_l11.png"
+    file "levelthumb_a0_e2_l11.png"
 }
 tilefromtexture 20032 {
-    file "levelthumbs/levelthumb_a0_e3_l01.png"
+    file "levelthumb_a0_e3_l01.png"
 }
 tilefromtexture 20033 {
-    file "levelthumbs/levelthumb_a0_e3_l02.png"
+    file "levelthumb_a0_e3_l02.png"
 }
 tilefromtexture 20034 {
-    file "levelthumbs/levelthumb_a0_e3_l03.png"
+    file "levelthumb_a0_e3_l03.png"
 }
 tilefromtexture 20035 {
-    file "levelthumbs/levelthumb_a0_e3_l04.png"
+    file "levelthumb_a0_e3_l04.png"
 }
 tilefromtexture 20036 {
-    file "levelthumbs/levelthumb_a0_e3_l05.png"
+    file "levelthumb_a0_e3_l05.png"
 }
 tilefromtexture 20037 {
-    file "levelthumbs/levelthumb_a0_e3_l06.png"
+    file "levelthumb_a0_e3_l06.png"
 }
 tilefromtexture 20038 {
-    file "levelthumbs/levelthumb_a0_e3_l07.png"
+    file "levelthumb_a0_e3_l07.png"
 }
 tilefromtexture 20039 {
-    file "levelthumbs/levelthumb_a0_e3_l08.png"
+    file "levelthumb_a0_e3_l08.png"
 }
 tilefromtexture 20040 {
-    file "levelthumbs/levelthumb_a0_e3_l09.png"
+    file "levelthumb_a0_e3_l09.png"
 }
 tilefromtexture 20041 {
-    file "levelthumbs/levelthumb_a0_e3_l10.png"
+    file "levelthumb_a0_e3_l10.png"
 }
 tilefromtexture 20042 {
-    file "levelthumbs/levelthumb_a0_e3_l11.png"
+    file "levelthumb_a0_e3_l11.png"
 }
 tilefromtexture 20048 {
-    file "levelthumbs/levelthumb_a0_e4_l01.png"
+    file "levelthumb_a0_e4_l01.png"
 }
 tilefromtexture 20049 {
-    file "levelthumbs/levelthumb_a0_e4_l02.png"
+    file "levelthumb_a0_e4_l02.png"
 }
 tilefromtexture 20050 {
-    file "levelthumbs/levelthumb_a0_e4_l03.png"
+    file "levelthumb_a0_e4_l03.png"
 }
 tilefromtexture 20051 {
-    file "levelthumbs/levelthumb_a0_e4_l04.png"
+    file "levelthumb_a0_e4_l04.png"
 }
 tilefromtexture 20052 {
-    file "levelthumbs/levelthumb_a0_e4_l05.png"
+    file "levelthumb_a0_e4_l05.png"
 }
 tilefromtexture 20053 {
-    file "levelthumbs/levelthumb_a0_e4_l06.png"
+    file "levelthumb_a0_e4_l06.png"
 }
 tilefromtexture 20054 {
-    file "levelthumbs/levelthumb_a0_e4_l07.png"
+    file "levelthumb_a0_e4_l07.png"
 }
 tilefromtexture 20055 {
-    file "levelthumbs/levelthumb_a0_e4_l08.png"
+    file "levelthumb_a0_e4_l08.png"
 }
 tilefromtexture 20056 {
-    file "levelthumbs/levelthumb_a0_e4_l09.png"
+    file "levelthumb_a0_e4_l09.png"
 }
 tilefromtexture 20057 {
-    file "levelthumbs/levelthumb_a0_e4_l10.png"
+    file "levelthumb_a0_e4_l10.png"
 }
 tilefromtexture 20058 {
-    file "levelthumbs/levelthumb_a0_e4_l11.png"
+    file "levelthumb_a0_e4_l11.png"
 }
 tilefromtexture 20120 {
-    file "levelthumbs/levelthumb_a3_caribbean_l01.png"
+    file "levelthumb_a3_caribbean_l01.png"
 }
 tilefromtexture 20121 {
-    file "levelthumbs/levelthumb_a3_caribbean_l02.png"
+    file "levelthumb_a3_caribbean_l02.png"
 }
 tilefromtexture 20122 {
-    file "levelthumbs/levelthumb_a3_caribbean_l03.png"
+    file "levelthumb_a3_caribbean_l03.png"
 }
 tilefromtexture 20123 {
-    file "levelthumbs/levelthumb_a3_caribbean_l04.png"
+    file "levelthumb_a3_caribbean_l04.png"
 }
 tilefromtexture 20124 {
-    file "levelthumbs/levelthumb_a3_caribbean_l05.png"
+    file "levelthumb_a3_caribbean_l05.png"
 }
 tilefromtexture 20125 {
-    file "levelthumbs/levelthumb_a3_caribbean_l06.png"
+    file "levelthumb_a3_caribbean_l06.png"
 }
 tilefromtexture 20126 {
-    file "levelthumbs/levelthumb_a3_caribbean_l07.png"
+    file "levelthumb_a3_caribbean_l07.png"
 }
 tilefromtexture 20127 {
-    file "levelthumbs/levelthumb_a3_caribbean_l08.png"
+    file "levelthumb_a3_caribbean_l08.png"
 }
 tilefromtexture 20080 {
-    file "levelthumbs/levelthumb_a1_dc_l01.png"
+    file "levelthumb_a1_dc_l01.png"
 }
 tilefromtexture 20081 {
-    file "levelthumbs/levelthumb_a1_dc_l02.png"
+    file "levelthumb_a1_dc_l02.png"
 }
 tilefromtexture 20082 {
-    file "levelthumbs/levelthumb_a1_dc_l03.png"
+    file "levelthumb_a1_dc_l03.png"
 }
 tilefromtexture 20083 {
-    file "levelthumbs/levelthumb_a1_dc_l04.png"
+    file "levelthumb_a1_dc_l04.png"
 }
 tilefromtexture 20084 {
-    file "levelthumbs/levelthumb_a1_dc_l05.png"
+    file "levelthumb_a1_dc_l05.png"
 }
 tilefromtexture 20085 {
-    file "levelthumbs/levelthumb_a1_dc_l06.png"
+    file "levelthumb_a1_dc_l06.png"
 }
 tilefromtexture 20086 {
-    file "levelthumbs/levelthumb_a1_dc_l07.png"
+    file "levelthumb_a1_dc_l07.png"
 }
 tilefromtexture 20087 {
-    file "levelthumbs/levelthumb_a1_dc_l08.png"
+    file "levelthumb_a1_dc_l08.png"
 }
 tilefromtexture 20088 {
-    file "levelthumbs/levelthumb_a1_dc_l09.png"
+    file "levelthumb_a1_dc_l09.png"
 }
 tilefromtexture 20089 {
-    file "levelthumbs/levelthumb_a1_dc_l10.png"
+    file "levelthumb_a1_dc_l10.png"
 }
 tilefromtexture 20100 {
-    file "levelthumbs/levelthumb_a2_winter_l01.png"
+    file "levelthumb_a2_winter_l01.png"
 }
 tilefromtexture 20101 {
-    file "levelthumbs/levelthumb_a2_winter_l02.png"
+    file "levelthumb_a2_winter_l02.png"
 }
 tilefromtexture 20102 {
-    file "levelthumbs/levelthumb_a2_winter_l03.png"
+    file "levelthumb_a2_winter_l03.png"
 }
 tilefromtexture 20103 {
-    file "levelthumbs/levelthumb_a2_winter_l04.png"
+    file "levelthumb_a2_winter_l04.png"
 }
 tilefromtexture 20104 {
-    file "levelthumbs/levelthumb_a2_winter_l05.png"
+    file "levelthumb_a2_winter_l05.png"
 }
 tilefromtexture 20105 {
-    file "levelthumbs/levelthumb_a2_winter_l06.png"
+    file "levelthumb_a2_winter_l06.png"
 }
 tilefromtexture 20106 {
-    file "levelthumbs/levelthumb_a2_winter_l07.png"
+    file "levelthumb_a2_winter_l07.png"
 }

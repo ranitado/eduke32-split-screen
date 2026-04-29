@@ -2653,6 +2653,7 @@ static int32_t Menu_LaunchSplitScreenUpdater(char const * const downloadUrl)
     char script[12288];
     Bsnprintf(script, sizeof(script),
         "$ErrorActionPreference='Stop'\r\n"
+        "try {\r\n"
         "$Host.UI.RawUI.WindowTitle='Duke Split Screen Updater'\r\n"
         "Clear-Host\r\n"
         "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12\r\n"
@@ -2696,7 +2697,16 @@ static int32_t Menu_LaunchSplitScreenUpdater(char const * const downloadUrl)
         "Write-Host 'Update installed. Restarting Duke Split Screen...' -ForegroundColor Green\r\n"
         "Start-Sleep -Seconds 1\r\n"
         "Start-Process -FilePath $exe -WorkingDirectory $root\r\n"
-        "Remove-Item -LiteralPath %s -Force -ErrorAction SilentlyContinue\r\n",
+        "Remove-Item -LiteralPath %s -Force -ErrorAction SilentlyContinue\r\n"
+        "} catch {\r\n"
+        "  Write-Host ''\r\n"
+        "  Write-Host 'Update failed.' -ForegroundColor Red\r\n"
+        "  Write-Host $_.Exception.Message -ForegroundColor Red\r\n"
+        "  Write-Host ''\r\n"
+        "  Write-Host 'Press Enter to close this window.' -ForegroundColor Yellow\r\n"
+        "  Read-Host | Out-Null\r\n"
+        "  exit 1\r\n"
+        "}\r\n",
         (unsigned long)GetCurrentProcessId(), rootPathPS, exePathPS, downloadUrlPS, updateVersionPS, scriptPathPS);
 
     if (!Menu_WriteTextFile(scriptPath, script))
@@ -5714,7 +5724,8 @@ static void Menu_PopulateReplayLevelMenu(void)
 
             int32_t played = 0, secrets = 0, maxSecrets = 0, bestTime = 0;
             CONFIG_GetSplitScreenLevelProgress(g_addonNum, volumeIndex, levelIndex, &played, &secrets, &maxSecrets, &bestTime);
-            if (!played)
+            int32_t const reachedInCurrentEpisode = volumeIndex == ud.volume_number && levelIndex <= ud.level_number;
+            if (!played && !reachedInCurrentEpisode)
                 continue;
 
             if (volumeIndex > ud.volume_number || (volumeIndex == ud.volume_number && levelIndex > ud.level_number))
@@ -10687,6 +10698,8 @@ static void Menu_RunInput(Menu_t *cm)
 
             if (state == 0)
             {
+                bool entryActivated = false;
+
                 if (currentry != NULL)
                 switch (currentry->type)
                 {
@@ -10701,6 +10714,7 @@ static void Menu_RunInput(Menu_t *cm)
                             I_AdvanceTriggerClear();
 
                             Menu_RunInput_EntryLink_Activate(currentry);
+                            entryActivated = true;
 
                             if (g_player[myconnectindex].ps->gm&MODE_MENU) // for skill selection
                                 S_PlaySound(PISTOL_BODYHIT);
@@ -10718,6 +10732,7 @@ static void Menu_RunInput(Menu_t *cm)
                             I_AdvanceTriggerClear();
 
                             Menu_RunInput_EntryOption_Activate(currentry, object);
+                            entryActivated = true;
 
                             S_PlaySound(PISTOL_BODYHIT);
                         }
@@ -10758,6 +10773,7 @@ static void Menu_RunInput(Menu_t *cm)
                             I_AdvanceTriggerClear();
 
                             Menu_RunInput_EntryCustom2Col_Activate(currentry);
+                            entryActivated = true;
 
                             S_PlaySound(PISTOL_BODYHIT);
                         }
@@ -10850,6 +10866,7 @@ static void Menu_RunInput(Menu_t *cm)
                             I_AdvanceTriggerClear();
 
                             Menu_RunInput_EntryString_Activate(currentry);
+                            entryActivated = true;
 
                             S_PlaySound(PISTOL_BODYHIT);
                         }
@@ -10858,7 +10875,7 @@ static void Menu_RunInput(Menu_t *cm)
                     }
                 }
 
-                if (I_ReturnTrigger() || I_EscapeTrigger() || Menu_RunInput_MouseReturn())
+                if (!entryActivated && (I_ReturnTrigger() || I_EscapeTrigger() || Menu_RunInput_MouseReturn()))
                 {
                     I_ReturnTriggerClear();
                     I_EscapeTriggerClear();
@@ -10877,7 +10894,7 @@ static void Menu_RunInput(Menu_t *cm)
                         Menu_AnimateChange(cm->parentID, cm->parentAnimation);
                     }
                 }
-                else if (KB_KeyPressed(sc_Home))
+                else if (!entryActivated && KB_KeyPressed(sc_Home))
                 {
                     KB_ClearKeyDown(sc_Home);
 
@@ -10885,7 +10902,7 @@ static void Menu_RunInput(Menu_t *cm)
 
                     currentry = Menu_RunInput_Menu_Movement(menu, MM_Home);
                 }
-                else if (KB_KeyPressed(sc_End))
+                else if (!entryActivated && KB_KeyPressed(sc_End))
                 {
                     KB_ClearKeyDown(sc_End);
 
@@ -10893,7 +10910,7 @@ static void Menu_RunInput(Menu_t *cm)
 
                     currentry = Menu_RunInput_Menu_Movement(menu, MM_End);
                 }
-                else if (I_MenuUp())
+                else if (!entryActivated && I_MenuUp())
                 {
                     I_MenuUpClear();
 
@@ -10901,7 +10918,7 @@ static void Menu_RunInput(Menu_t *cm)
 
                     currentry = Menu_RunInput_Menu_Movement(menu, MM_Up);
                 }
-                else if (I_MenuDown())
+                else if (!entryActivated && I_MenuDown())
                 {
                     I_MenuDownClear();
 
@@ -10909,7 +10926,7 @@ static void Menu_RunInput(Menu_t *cm)
 
                     currentry = Menu_RunInput_Menu_Movement(menu, MM_Down);
                 }
-                else if (KB_KeyPressed(sc_PgUp) || MOUSE_GetButtons() & M_WHEELUP)
+                else if (!entryActivated && (KB_KeyPressed(sc_PgUp) || MOUSE_GetButtons() & M_WHEELUP))
                 {
                     if (cm->type != List)
                         break;
@@ -10926,7 +10943,7 @@ static void Menu_RunInput(Menu_t *cm)
 
                     Menu_RunInput_Menu_MovementVerify(menu);
                 }
-                else if (KB_KeyPressed(sc_PgDn) || MOUSE_GetButtons() & M_WHEELDOWN)
+                else if (!entryActivated && (KB_KeyPressed(sc_PgDn) || MOUSE_GetButtons() & M_WHEELDOWN))
                 {
                     if (cm->type != List)
                         break;
@@ -10943,7 +10960,7 @@ static void Menu_RunInput(Menu_t *cm)
 
                     Menu_RunInput_Menu_MovementVerify(menu);
                 }
-                else if (KB_KeyWaiting() && KB_KeyPressed(KB_GetLastScanCode()))
+                else if (!entryActivated && KB_KeyWaiting() && KB_KeyPressed(KB_GetLastScanCode()))
                 {
                     // this is fucking terrible, sorry
                     char ch = KB_GetCh(), ch2 = KB_ScanCodeToString(KB_GetLastScanCode())[0];
@@ -10987,7 +11004,7 @@ static void Menu_RunInput(Menu_t *cm)
                     }
                 }
 
-                if (currentry != NULL)
+                if (!entryActivated && currentry != NULL)
                     Menu_PreInput(currentry);
             }
             else if (state == 1)
