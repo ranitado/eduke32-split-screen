@@ -12051,7 +12051,10 @@ void M_DisplayMenus(void)
         videoFadeToBlack(1);
 
     if ((g_player[myconnectindex].ps->gm & MODE_GAME) == 0)
+    {
         videoSetViewableArea(0, 0, xdim - 1, ydim - 1);
+        Menu_DrawBackground({ 0, 0 });
+    }
     else if (Menu_UpdateScreenOK(g_currentMenu))
         G_UpdateScreenArea();
 

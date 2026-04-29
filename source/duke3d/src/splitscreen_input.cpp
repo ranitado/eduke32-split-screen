@@ -134,6 +134,39 @@ static int G_GetPlayerForGamepadIndex(int const gamepadIndex)
     return -1;
 }
 
+static bool G_IsGamepadIndexConnected(int const gamepadIndex)
+{
+    if ((unsigned)gamepadIndex >= (unsigned)MAX_LOCAL_PLAYERS || gamepadIndex >= joyGetConnectedGamepadCount())
+        return false;
+
+    gamepadstate_t state {};
+    return joyGetGamepadState(gamepadIndex, &state) == 0 && state.connected;
+}
+
+static bool G_PlayerHasConnectedAssignedInput(int const playerNum)
+{
+    int32_t const playerInput = G_GetSplitScreenPlayerInput(playerNum);
+    if (playerInput == SPLITSCREEN_INPUT_NONE)
+        return false;
+
+    if (G_SplitScreenInputHasKeyboardMouse(playerInput))
+        return true;
+
+    return G_IsGamepadIndexConnected(G_GetSplitScreenInputGamepadIndex(playerInput));
+}
+
+static int G_GetActivePlayerWithoutConnectedInput(void)
+{
+    for (int viewIndex = 0, playerCount = min<int32_t>(G_GetSplitScreenPlayerCount(), MAX_LOCAL_PLAYERS); viewIndex < playerCount; ++viewIndex)
+    {
+        int const playerNum = G_GetSplitScreenPlayer(viewIndex);
+        if ((unsigned)playerNum < MAX_LOCAL_PLAYERS && !G_PlayerHasConnectedAssignedInput(playerNum))
+            return playerNum;
+    }
+
+    return -1;
+}
+
 static bool G_GamepadButtonHeld(uint32_t const buttons, int const button)
 {
     return (buttons & (1u << button)) != 0;
@@ -1319,9 +1352,9 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
     G_UpdatePreviousGamepadState(playerNum, state);
 }
 
-static bool G_CanJoinCurrentGame(void)
+static bool G_CanHandleDropInInput(void)
 {
-    if (g_netServer || g_netClient || G_GetSplitScreenPlayerCount() >= MAX_LOCAL_PLAYERS)
+    if (g_netServer || g_netClient)
         return false;
 
     auto const primaryPlayer = g_player[myconnectindex].ps;
@@ -1331,11 +1364,20 @@ static bool G_CanJoinCurrentGame(void)
     return ud.m_coop == 1 || !G_HaveSplitScreen();
 }
 
+static bool G_CanJoinCurrentGame(void)
+{
+    return G_CanHandleDropInInput() && G_GetSplitScreenPlayerCount() < MAX_LOCAL_PLAYERS;
+}
+
 static int G_GetJoinPlayerForGamepadIndex(int const gamepadIndex)
 {
     int const assignedPlayer = G_GetPlayerForGamepadIndex(gamepadIndex);
     if (assignedPlayer >= 0)
         return assignedPlayer;
+
+    int const playerWithoutInput = G_GetActivePlayerWithoutConnectedInput();
+    if (playerWithoutInput >= 0)
+        return playerWithoutInput;
 
     for (int playerNum = 1; playerNum < MAX_LOCAL_PLAYERS; ++playerNum)
         if (!G_IsSplitScreenPlayerActive(playerNum))
@@ -1355,6 +1397,7 @@ static int G_GetJoinPlayerForKeyboardMouse(void)
 
 static void G_UpdateSplitScreenJoinInputs(void)
 {
+    bool const canHandleDropIn = G_CanHandleDropInInput();
     bool const canJoin = G_CanJoinCurrentGame();
     uint32_t const keyboardActions = G_GetSplitScreenKeyboardMenuActions();
     bool const keyboardJoinPressed = (keyboardActions & SPLIT_KEYMENU_ACCEPT) != 0
@@ -1390,8 +1433,10 @@ static void G_UpdateSplitScreenJoinInputs(void)
         bool const startPressed = G_GamepadButtonPressed(buttons, g_splitScreenJoinPrevButtons[gamepadIndex], GP_START);
         int const assignedPlayer = G_GetPlayerForGamepadIndex(gamepadIndex);
         int const playerNum = startPressed ? G_GetJoinPlayerForGamepadIndex(gamepadIndex) : assignedPlayer;
+        bool const playerIsActive = playerNum >= 0 && (unsigned)playerNum < MAX_LOCAL_PLAYERS && G_IsSplitScreenPlayerActive(playerNum);
+        bool const canReassignDisconnectedPlayer = canHandleDropIn && startPressed && playerIsActive && assignedPlayer < 0 && !G_PlayerHasConnectedAssignedInput(playerNum);
 
-        if (canJoin && startPressed && playerNum >= 0 && (unsigned)playerNum < MAX_LOCAL_PLAYERS && !G_IsSplitScreenPlayerActive(playerNum))
+        if ((canReassignDisconnectedPlayer || (canJoin && !playerIsActive)) && startPressed && playerNum >= 0 && (unsigned)playerNum < MAX_LOCAL_PLAYERS)
         {
             if (assignedPlayer < 0)
             {
@@ -1399,7 +1444,7 @@ static void G_UpdateSplitScreenJoinInputs(void)
                 CONFIG_WriteSetup(0);
             }
 
-            if (G_AddSplitScreenPlayer(playerNum) >= 0)
+            if (playerIsActive || G_AddSplitScreenPlayer(playerNum) >= 0)
             {
                 G_CloseSplitScreenConfigMenu(playerNum);
                 G_FreezeSplitScreenPadInput(playerNum, state);
