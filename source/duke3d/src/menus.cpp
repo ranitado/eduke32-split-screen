@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "cmdline.h"
 #include "communityapi.h"
 #include "compat.h"
+#include "baselayer.h"
 #include "demo.h"
 #include "duke3d.h"
 #include "grpscan.h"
@@ -92,6 +93,7 @@ int32_t m_mouselastactivity;
 int32_t m_mousewake_watchpoint, m_menuchange_watchpoint;
 #endif
 int32_t m_mousecaught;
+static int32_t m_suppressSyntheticMouseClickFrames;
 static vec2_t m_prevmousepos, m_mousepos, m_mousedownpos;
 static int32_t Menu_MouseOutsideBounds(vec2_t const *pos, int32_t x, int32_t y, int32_t width, int32_t height);
 
@@ -2366,6 +2368,214 @@ static int32_t Menu_ReadSplitScreenUpdateResult(char const * const resultPath, c
     return version[0] != '\0' && downloadUrl[0] != '\0';
 }
 
+static int32_t Menu_ReadTextFileIntoBuffer(char const * const path, char * const out, size_t const outSize)
+{
+    if (outSize == 0)
+        return 0;
+
+    out[0] = '\0';
+
+    FILE * const fp = fopen(path, "rb");
+    if (fp == nullptr)
+        return 0;
+
+    size_t const bytesRead = fread(out, 1, outSize - 1, fp);
+    fclose(fp);
+
+    out[bytesRead] = '\0';
+    return bytesRead > 0;
+}
+
+static int32_t Menu_ExtractJsonStringValue(char const * const json, char const * const key, char * const out, size_t const outSize)
+{
+    if (outSize == 0)
+        return 0;
+
+    out[0] = '\0';
+
+    char keyPattern[128];
+    Bsnprintf(keyPattern, sizeof(keyPattern), "\"%s\"", key);
+
+    char const *keyPos = Bstrstr(json, keyPattern);
+    if (keyPos == nullptr)
+        return 0;
+
+    char const *value = Bstrchr(keyPos + Bstrlen(keyPattern), ':');
+    if (value == nullptr)
+        return 0;
+
+    ++value;
+    while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
+        ++value;
+
+    if (*value != '"')
+        return 0;
+
+    ++value;
+
+    size_t pos = 0;
+    while (*value != '\0' && *value != '"' && pos + 1 < outSize)
+    {
+        if (*value == '\\' && value[1] != '\0')
+            ++value;
+
+        out[pos++] = *value++;
+    }
+
+    out[pos] = '\0';
+    return out[0] != '\0';
+}
+
+static int32_t Menu_ExtractReleaseZipUrl(char const * const json, char * const out, size_t const outSize)
+{
+    char const *search = json;
+    char fallback[1024] = "";
+
+    while ((search = Bstrstr(search, "\"browser_download_url\"")) != nullptr)
+    {
+        char url[1024];
+        if (Menu_ExtractJsonStringValue(search, "browser_download_url", url, sizeof(url)) && Bstrstr(url, ".zip") != nullptr)
+        {
+            if (Bstrstr(url, "windows") != nullptr && Bstrstr(url, "x64") != nullptr)
+            {
+                Bstrncpyz(out, url, outSize);
+                return 1;
+            }
+
+            if (fallback[0] == '\0')
+                Bstrncpyz(fallback, url, sizeof(fallback));
+        }
+
+        search += 22;
+    }
+
+    if (fallback[0] == '\0')
+        return 0;
+
+    Bstrncpyz(out, fallback, outSize);
+    return 1;
+}
+
+static int32_t Menu_DownloadFileUrlMon(char const * const url, char const * const destination)
+{
+    HMODULE const urlmon = LoadLibraryA("urlmon.dll");
+    if (urlmon == nullptr)
+        return 0;
+
+    typedef HRESULT (WINAPI *URLDownloadToFileAFunc)(void *, LPCSTR, LPCSTR, DWORD, void *);
+    auto const download = (URLDownloadToFileAFunc)GetProcAddress(urlmon, "URLDownloadToFileA");
+    if (download == nullptr)
+    {
+        FreeLibrary(urlmon);
+        return 0;
+    }
+
+    HRESULT const result = download(nullptr, url, destination, 0, nullptr);
+    FreeLibrary(urlmon);
+    return SUCCEEDED(result);
+}
+
+static int32_t Menu_DownloadTextWinInet(char const * const url, char * const out, size_t const outSize)
+{
+    if (outSize == 0)
+        return 0;
+
+    out[0] = '\0';
+
+    HMODULE const wininet = LoadLibraryA("wininet.dll");
+    if (wininet == nullptr)
+        return 0;
+
+    typedef void * HINTERNET_LOCAL;
+    typedef HINTERNET_LOCAL (WINAPI *InternetOpenAFunc)(LPCSTR, DWORD, LPCSTR, LPCSTR, DWORD);
+    typedef HINTERNET_LOCAL (WINAPI *InternetOpenUrlAFunc)(HINTERNET_LOCAL, LPCSTR, LPCSTR, DWORD, DWORD, DWORD_PTR);
+    typedef BOOL (WINAPI *InternetReadFileFunc)(HINTERNET_LOCAL, LPVOID, DWORD, LPDWORD);
+    typedef BOOL (WINAPI *InternetCloseHandleFunc)(HINTERNET_LOCAL);
+
+    auto const internetOpen = (InternetOpenAFunc)GetProcAddress(wininet, "InternetOpenA");
+    auto const internetOpenUrl = (InternetOpenUrlAFunc)GetProcAddress(wininet, "InternetOpenUrlA");
+    auto const internetReadFile = (InternetReadFileFunc)GetProcAddress(wininet, "InternetReadFile");
+    auto const internetCloseHandle = (InternetCloseHandleFunc)GetProcAddress(wininet, "InternetCloseHandle");
+
+    if (internetOpen == nullptr || internetOpenUrl == nullptr || internetReadFile == nullptr || internetCloseHandle == nullptr)
+    {
+        FreeLibrary(wininet);
+        return 0;
+    }
+
+    DWORD constexpr INTERNET_OPEN_TYPE_PRECONFIG_LOCAL = 0;
+    DWORD constexpr INTERNET_FLAG_RELOAD_LOCAL = 0x80000000u;
+    DWORD constexpr INTERNET_FLAG_NO_CACHE_WRITE_LOCAL = 0x04000000u;
+    DWORD constexpr INTERNET_FLAG_SECURE_LOCAL = 0x00800000u;
+
+    HINTERNET_LOCAL const session = internetOpen("DukeSplitScreen", INTERNET_OPEN_TYPE_PRECONFIG_LOCAL, nullptr, nullptr, 0);
+    if (session == nullptr)
+    {
+        FreeLibrary(wininet);
+        return 0;
+    }
+
+    char const headers[] = "Accept: application/vnd.github+json\r\n";
+    HINTERNET_LOCAL const request = internetOpenUrl(session, url, headers, ARRAY_SIZE(headers) - 1,
+                                                    INTERNET_FLAG_RELOAD_LOCAL | INTERNET_FLAG_NO_CACHE_WRITE_LOCAL | INTERNET_FLAG_SECURE_LOCAL, 0);
+    if (request == nullptr)
+    {
+        internetCloseHandle(session);
+        FreeLibrary(wininet);
+        return 0;
+    }
+
+    size_t pos = 0;
+    BOOL ok = TRUE;
+    while (pos + 1 < outSize)
+    {
+        DWORD bytesRead = 0;
+        ok = internetReadFile(request, out + pos, (DWORD)min<size_t>(4096, outSize - pos - 1), &bytesRead);
+        if (!ok || bytesRead == 0)
+            break;
+
+        pos += bytesRead;
+    }
+
+    out[pos] = '\0';
+
+    internetCloseHandle(request);
+    internetCloseHandle(session);
+    FreeLibrary(wininet);
+
+    return ok && pos > 0;
+}
+
+static int32_t Menu_QueryLatestSplitScreenReleaseUrlMon(char * const version, size_t const versionSize, char * const downloadUrl, size_t const downloadUrlSize)
+{
+    char json[65536];
+    char const apiUrl[] = "https://api.github.com/repos/ranitado/eduke32-split-screen/releases/latest";
+
+    if (Menu_DownloadTextWinInet(apiUrl, json, sizeof(json)))
+        return Menu_ExtractJsonStringValue(json, "tag_name", version, versionSize)
+            && Menu_ExtractReleaseZipUrl(json, downloadUrl, downloadUrlSize);
+
+    char tempPath[BMAX_PATH];
+    if (!GetTempPathA(ARRAY_SIZE(tempPath), tempPath))
+        return 0;
+
+    char jsonPath[BMAX_PATH];
+    Bsnprintf(jsonPath, sizeof(jsonPath), "%seduke32-split-screen-release-%lu.json", tempPath, (unsigned long)GetCurrentProcessId());
+    remove(jsonPath);
+
+    if (!Menu_DownloadFileUrlMon(apiUrl, jsonPath))
+        return 0;
+
+    int32_t const readOk = Menu_ReadTextFileIntoBuffer(jsonPath, json, sizeof(json));
+    remove(jsonPath);
+
+    if (!readOk)
+        return 0;
+
+    return Menu_ExtractJsonStringValue(json, "tag_name", version, versionSize)
+        && Menu_ExtractReleaseZipUrl(json, downloadUrl, downloadUrlSize);
+}
+
 static int32_t Menu_WriteSplitScreenUpdateCheckScript(char const * const scriptPath, char const * const resultPath)
 {
     char resultPathPS[BMAX_PATH * 2];
@@ -2503,7 +2713,8 @@ static void Menu_FinishSplitScreenUpdateCheck(int32_t const ok)
     g_updateLatestVersion[0] = '\0';
     g_updateDownloadUrl[0] = '\0';
 
-    if (!ok || !Menu_ReadSplitScreenUpdateResult(g_updateCheckResultPath, latestVersion, sizeof(latestVersion), downloadUrl, sizeof(downloadUrl)))
+    if ((!ok || !Menu_ReadSplitScreenUpdateResult(g_updateCheckResultPath, latestVersion, sizeof(latestVersion), downloadUrl, sizeof(downloadUrl)))
+        && !Menu_QueryLatestSplitScreenReleaseUrlMon(latestVersion, sizeof(latestVersion), downloadUrl, sizeof(downloadUrl)))
     {
         Bstrncpyz(g_updateStatus, "Update check failed", sizeof(g_updateStatus));
         return;
@@ -2585,7 +2796,8 @@ static void Menu_StartSplitScreenUpdateCheck(void)
     if (g_updateCheckProcess == nullptr)
     {
         remove(g_updateCheckScriptPath);
-        Bstrncpyz(g_updateStatus, "Update check failed", sizeof(g_updateStatus));
+        Menu_FinishSplitScreenUpdateCheck(0);
+        remove(g_updateCheckResultPath);
     }
 }
 
@@ -5948,11 +6160,61 @@ static int32_t Menu_GetSkillSound(int32_t const skillIndex)
     }
 }
 
+static int32_t Menu_IsGamepadInputUsedByOtherPlayer(int32_t const gamepadIndex, int32_t const playerToSkip)
+{
+    for (int playerNum = 0; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
+    {
+        if (playerNum == playerToSkip)
+            continue;
+
+        if (G_GetSplitScreenInputGamepadIndex(G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum])) == gamepadIndex)
+            return 1;
+    }
+
+    return 0;
+}
+
+static int32_t Menu_FindReplacementGamepadInput(int32_t const playerToSkip)
+{
+    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
+        if (!Menu_IsGamepadInputUsedByOtherPlayer(gamepadIndex, playerToSkip))
+            return SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
+
+    return SPLITSCREEN_INPUT_NONE;
+}
+
+static void Menu_AssignStartingGamepadToPlayer1(void)
+{
+    int32_t const gamepadIndex = I_GetMenuAdvanceGamepadIndex();
+    if ((unsigned)gamepadIndex >= MAXSPLITSCREENCONTROLLERS)
+        return;
+
+    int32_t const player1Input = ud.config.SplitScreenSeparateKeyboardMouse
+        ? SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 + gamepadIndex
+        : SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
+
+    ud.config.SplitScreenPlayerInput[0] = player1Input;
+    joySetPrimaryGamepadIndex(gamepadIndex);
+
+    for (int playerNum = 1; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
+    {
+        if (G_GetSplitScreenInputGamepadIndex(G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum])) != gamepadIndex)
+            continue;
+
+        ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_NONE;
+        ud.config.SplitScreenPlayerInput[playerNum] = Menu_FindReplacementGamepadInput(playerNum);
+    }
+
+    CONFIG_WriteSetup(0);
+}
+
 static int32_t Menu_RelaunchPendingAddonNewGame(int32_t const skillIndex)
 {
     int32_t const pendingAddon = Menu_GetPendingAddon();
     if (pendingAddon == g_addonNum)
         return 0;
+
+    Menu_AssignStartingGamepadToPlayer1();
 
     char extraArgs[160];
     Bsnprintf(extraArgs, sizeof(extraArgs), "-splitscreennewgame %d %d %d %d %d %d",
@@ -5986,6 +6248,7 @@ static void Menu_StartConfiguredGame(int32_t const skillIndex, int32_t const ski
     ud.m_respawn_monsters = (skillIndex == 3);
     ud.m_monsters_off = ud.monsters_off = 0;
     ud.multimode = Menu_GetCurrentLocalPlayerCount();
+    Menu_AssignStartingGamepadToPlayer1();
     G_NewGame_EnterLevel();
 }
 
@@ -6013,6 +6276,7 @@ static void Menu_StartReplayLevel(void)
     ud.m_ffire = ud.ffire;
     ud.m_weaponsharing = ud.weaponsharing;
 
+    Menu_AssignStartingGamepadToPlayer1();
     Menu_Change(MENU_CLOSE);
     G_NewGame_EnterLevel();
 }
@@ -6434,21 +6698,6 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
         }
     }
 }
-
-#if !defined EDUKE32_TOUCH_DEVICES
-static int32_t Menu_HasGamepadButtonActivity(void)
-{
-    int32_t const gamepadCount = joyGetConnectedGamepadCount();
-    for (int32_t gamepadIndex = 0; gamepadIndex < gamepadCount; ++gamepadIndex)
-    {
-        gamepadstate_t state {};
-        if (joyGetGamepadState(gamepadIndex, &state) == 0 && state.connected && state.buttons != 0)
-            return 1;
-    }
-
-    return 0;
-}
-#endif
 
 static int32_t Menu_EntryOptionModify(MenuEntry_t *entry, int32_t newOption)
 {
@@ -10889,6 +11138,33 @@ void M_DisplayMenus(void)
     if (mousestatus && g_mouseClickState == MOUSE_PRESSED)
         m_mousedownpos = m_mousepos;
 
+#if !defined EDUKE32_TOUCH_DEVICES
+    int32_t const gamepadButtonActivity = I_MenuGamepadActivity();
+    if (gamepadButtonActivity)
+    {
+        // Gamepad focus must be applied before Menu_RunInput/Menu_Run. Otherwise
+        // mouse hover can immediately overwrite currentEntry after d-pad/stick movement.
+        m_mouselastactivity = -M_MOUSETIMEOUT;
+        m_mousewake_watchpoint = 0;
+    }
+
+    if (gamepadButtonActivity && g_mouseClickState != MOUSE_IDLE)
+        m_suppressSyntheticMouseClickFrames = 8;
+
+    if (m_suppressSyntheticMouseClickFrames > 0)
+    {
+        if (g_mouseClickState != MOUSE_IDLE)
+        {
+            MOUSE_ClearAllButtons();
+            g_mouseClickState = MOUSE_IDLE;
+            m_mousecaught = 1;
+        }
+
+        if (!gamepadButtonActivity)
+            --m_suppressSyntheticMouseClickFrames;
+    }
+#endif
+
     M_UpdateDeveloperModeToggle();
     Menu_RunInput(m_currentMenu);
 
@@ -11062,7 +11338,7 @@ void M_DisplayMenus(void)
     }
 
 #ifndef EDUKE32_TOUCH_DEVICES
-    if (g_mouseClickState == MOUSE_IDLE && Menu_HasGamepadButtonActivity())
+    if (g_mouseClickState == MOUSE_IDLE && I_MenuGamepadActivity())
     {
         m_mouselastactivity = -M_MOUSETIMEOUT;
         m_mousewake_watchpoint = 0;

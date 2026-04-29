@@ -39,6 +39,7 @@ static int32_t g_menuGamepadRepeatClock = -1;
 static uint32_t g_menuKeyboardMouseClearActions = 0;
 static UserInput g_menuUserInput;
 static int32_t g_menuUserInputClock = -1;
+static int32_t g_menuLastAdvanceGamepadIndex = -1;
 
 enum MenuKeyboardMouseAction_t
 {
@@ -76,7 +77,8 @@ static bool I_IsMenuGamepadAllowed(int const gamepadIndex)
     if (assignedGamepadIndex >= 0)
         return assignedGamepadIndex == gamepadIndex;
 
-    return numplayers == 1 && myconnectindex == 0 && gamepadIndex == 0 && !I_IsGamepadAssignedToNonPrimaryPlayer(gamepadIndex);
+    int32_t const primaryGamepadIndex = joyGetPrimaryGamepadIndex();
+    return numplayers == 1 && myconnectindex == 0 && gamepadIndex == primaryGamepadIndex && !I_IsGamepadAssignedToNonPrimaryPlayer(gamepadIndex);
 }
 
 static bool I_ShouldSuppressControlJoystickInputForMenu(void)
@@ -85,15 +87,18 @@ static bool I_ShouldSuppressControlJoystickInputForMenu(void)
         return false;
 
     // CONTROL_GetUserInput() only reads the primary controller. Keep that path
-    // alive when player 1 actually owns pad 1; otherwise raw per-pad filtering
-    // below decides which gamepad is allowed to drive the menu.
-    return G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(myconnectindex)) != 0;
+    // alive when player 1 owns that same physical pad; otherwise raw per-pad
+    // filtering below decides which gamepad is allowed to drive the menu.
+    int32_t const assignedGamepadIndex = G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(myconnectindex));
+    return assignedGamepadIndex >= 0 && assignedGamepadIndex != joyGetPrimaryGamepadIndex();
 }
 
-static uint32_t I_GetAllowedMenuGamepadButtons(direction * const heldDirection = nullptr)
+static uint32_t I_GetAllowedMenuGamepadButtons(direction * const heldDirection = nullptr, int32_t * const advanceGamepadIndex = nullptr)
 {
     if (heldDirection != nullptr)
         *heldDirection = dir_None;
+    if (advanceGamepadIndex != nullptr)
+        *advanceGamepadIndex = -1;
 
     uint32_t buttons = 0;
     int const gamepadCount = min<int32_t>(joyGetConnectedGamepadCount(), MAXSPLITSCREENCONTROLLERS);
@@ -120,6 +125,8 @@ static uint32_t I_GetAllowedMenuGamepadButtons(direction * const heldDirection =
             continue;
 
         buttons |= state.buttons;
+        if (advanceGamepadIndex != nullptr && *advanceGamepadIndex < 0 && (state.buttons & (1u << CONTROLLER_BUTTON_A)))
+            *advanceGamepadIndex = gamepadIndex;
 
         if (heldDirection == nullptr || *heldDirection != dir_None)
             continue;
@@ -132,7 +139,8 @@ static uint32_t I_GetAllowedMenuGamepadButtons(direction * const heldDirection =
 
 static direction I_GetPrimaryControllerMenuDirectionFallback(void)
 {
-    if (!I_IsMenuGamepadAllowed(0))
+    int32_t const primaryGamepadIndex = joyGetPrimaryGamepadIndex();
+    if (primaryGamepadIndex < 0 || !I_IsMenuGamepadAllowed(primaryGamepadIndex))
         return dir_None;
 
     bool const oldSuppressJoystickInput = CONTROL_SuppressJoystickInput;
@@ -143,6 +151,29 @@ static direction I_GetPrimaryControllerMenuDirectionFallback(void)
     CONTROL_SuppressJoystickInput = oldSuppressJoystickInput;
 
     return fallback.dir;
+}
+
+int32_t I_MenuGamepadActivity(void)
+{
+    int const gamepadCount = min<int32_t>(joyGetConnectedGamepadCount(), MAXSPLITSCREENCONTROLLERS);
+    int constexpr axisThreshold = 8000;
+
+    for (int gamepadIndex = 0; gamepadIndex < gamepadCount; ++gamepadIndex)
+    {
+        if (!I_IsMenuGamepadAllowed(gamepadIndex))
+            continue;
+
+        gamepadstate_t state {};
+        if (joyGetGamepadState(gamepadIndex, &state) != 0 || !state.connected)
+            continue;
+
+        if (state.buttons != 0
+            || klabs(state.axes[GAMEPAD_AXIS_LEFTX]) >= axisThreshold
+            || klabs(state.axes[GAMEPAD_AXIS_LEFTY]) >= axisThreshold)
+            return 1;
+    }
+
+    return 0;
 }
 
 static direction I_FilterMenuGamepadDirection(direction const heldDirection)
@@ -182,16 +213,21 @@ static bool I_MenuGamepadButtonActive(uint32_t const buttons, int const button)
     return (g_menuGamepadClearButtons & mask) == 0;
 }
 
-static void I_ApplyMenuGamepadButtonFilter(bool &trigger, uint32_t const buttons, int const button)
+static bool I_ApplyMenuGamepadButtonFilter(bool &trigger, uint32_t const buttons, int const button)
 {
     uint32_t const mask = 1u << button;
     bool const held = (buttons & mask) != 0;
     bool const active = I_MenuGamepadButtonActive(buttons, button);
 
     if (held && !active)
+    {
         trigger = false;
+        return false;
+    }
     else
         trigger = trigger || active;
+
+    return active;
 }
 
 static bool I_MenuKeyboardMouseActionActive(uint32_t const action, bool const held)
@@ -274,7 +310,8 @@ static UserInput *I_GetUserInput(void)
         info.b_return = false;
 
     direction heldDirection = dir_None;
-    uint32_t const buttons = I_GetAllowedMenuGamepadButtons(&heldDirection);
+    int32_t advanceGamepadIndex = -1;
+    uint32_t const buttons = I_GetAllowedMenuGamepadButtons(&heldDirection, &advanceGamepadIndex);
     if (heldDirection == dir_None && restrictGamepadInput)
         heldDirection = I_GetPrimaryControllerMenuDirectionFallback();
 
@@ -285,9 +322,12 @@ static UserInput *I_GetUserInput(void)
     if (direction != dir_None)
         info.dir = direction;
 
-    I_ApplyMenuGamepadButtonFilter(info.b_advance, buttons, CONTROLLER_BUTTON_A);
+    bool const gamepadAdvanceActive = I_ApplyMenuGamepadButtonFilter(info.b_advance, buttons, CONTROLLER_BUTTON_A);
     I_ApplyMenuGamepadButtonFilter(info.b_return, buttons, CONTROLLER_BUTTON_B);
     I_ApplyMenuGamepadButtonFilter(info.b_escape, buttons, CONTROLLER_BUTTON_START);
+
+    if (info.b_advance)
+        g_menuLastAdvanceGamepadIndex = gamepadAdvanceActive ? advanceGamepadIndex : -1;
 
     g_menuUserInput = info;
     g_menuUserInputClock = inputClock;
@@ -323,6 +363,7 @@ void I_ClearAllInput(void)
     g_menuKeyboardMouseClearActions = 0;
     g_menuUserInput = {};
     g_menuUserInputClock = -1;
+    g_menuLastAdvanceGamepadIndex = -1;
     mouseAdvanceClickState();
 }
 
@@ -353,7 +394,21 @@ int32_t I_TextSubmit(void)
     return I_GetUserInput()->b_advance;
 }
 int32_t I_ReturnTrigger(void) { return I_GetUserInput()->b_return; }
-int32_t I_AdvanceTrigger(void) { return I_TextSubmit() || KB_KeyPressed(sc_Space); }
+int32_t I_AdvanceTrigger(void)
+{
+    if (I_TextSubmit())
+        return 1;
+
+    if (KB_KeyPressed(sc_Space))
+    {
+        g_menuLastAdvanceGamepadIndex = -1;
+        return 1;
+    }
+
+    return 0;
+}
+
+int32_t I_GetMenuAdvanceGamepadIndex(void) { return g_menuLastAdvanceGamepadIndex; }
 
 void I_TextSubmitClear(void) { I_ClearAllInput(); }
 
@@ -365,6 +420,8 @@ void I_AdvanceTriggerClear(void)
 
 int32_t I_GeneralTrigger(void)
 {
+    I_BeginMenuInputFrame();
+
 #if !defined GEKKO && !defined EDUKE32_TOUCH_DEVICES
     int32_t const mouseAdvance = MOUSE_GetButtons() & M_LEFTBUTTON;
 #endif
@@ -373,16 +430,7 @@ int32_t I_GeneralTrigger(void)
 #if !defined GEKKO && !defined EDUKE32_TOUCH_DEVICES
         mouseAdvance ||
 #endif
-        I_AdvanceTrigger() || I_ReturnTrigger() || I_EscapeTrigger()
-#if !defined GEKKO
-        || BUTTON(gamefunc_Open)
-# if !defined EDUKE32_TOUCH_DEVICES
-        || MOUSEINACTIVECONDITIONAL(BUTTON(gamefunc_Fire))
-# else
-        || BUTTON(gamefunc_Fire)
-# endif
-#endif
-        ;
+        I_AdvanceTrigger() || I_ReturnTrigger() || I_EscapeTrigger();
 }
 
 void I_GeneralTriggerClear(void)

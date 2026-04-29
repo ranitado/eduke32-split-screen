@@ -54,7 +54,6 @@ constexpr int MAX_LOCAL_PLAYERS = 4;
 constexpr uint8_t WEAPON_REPEAT_INITIAL_DELAY = 12;
 constexpr uint8_t WEAPON_REPEAT_INTERVAL = 4;
 constexpr uint8_t WEAPON_PULSE_FRAMES = 2;
-constexpr uint8_t PAUSE_PULSE_FRAMES = 3;
 
 enum split_config_menu_page_t
 {
@@ -101,7 +100,6 @@ static int8_t g_splitScreenWeaponRepeatDir[MAXPLAYERS];
 static uint8_t g_splitScreenWeaponRepeatDelay[MAXPLAYERS];
 static int8_t g_splitScreenWeaponPulseDir[MAXPLAYERS];
 static uint8_t g_splitScreenWeaponPulseFrames[MAXPLAYERS];
-static uint8_t g_splitScreenPausePulseFrames[MAXPLAYERS];
 static split_config_menu_state_t g_splitScreenConfigMenu[MAXPLAYERS];
 static uint32_t g_splitScreenContinuePrevButtons[MAX_LOCAL_PLAYERS];
 static uint32_t g_splitScreenJoinPrevButtons[MAX_LOCAL_PLAYERS];
@@ -1050,7 +1048,6 @@ static void G_ClearSplitScreenPadInput(int const playerNum)
     g_splitScreenWeaponRepeatDelay[playerNum] = 0;
     g_splitScreenWeaponPulseDir[playerNum] = 0;
     g_splitScreenWeaponPulseFrames[playerNum] = 0;
-    g_splitScreenPausePulseFrames[playerNum] = 0;
     g_splitScreenAimLastTicks[playerNum] = 0;
     g_splitScreenJoinSuppressFrames[playerNum] = 0;
 }
@@ -1066,7 +1063,6 @@ static void G_FreezeSplitScreenPadInput(int const playerNum, gamepadstate_t cons
     g_splitScreenWeaponRepeatDelay[playerNum] = 0;
     g_splitScreenWeaponPulseDir[playerNum] = 0;
     g_splitScreenWeaponPulseFrames[playerNum] = 0;
-    g_splitScreenPausePulseFrames[playerNum] = 0;
     g_splitScreenAimLastTicks[playerNum] = 0;
 
     if (state.connected)
@@ -1135,12 +1131,7 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
         }
     }
 
-    if (pauseEdgePressed)
-        g_splitScreenPausePulseFrames[playerNum] = PAUSE_PULSE_FRAMES;
-
-    bool const pausePressed = g_splitScreenPausePulseFrames[playerNum] > 0;
-
-    if ((pPlayer->gm & (MODE_MENU | MODE_TYPE)) != 0 || (ud.pause_on && !pausePressed))
+    if ((pPlayer->gm & (MODE_MENU | MODE_TYPE)) != 0 || ud.pause_on)
     {
         G_UpdatePreviousGamepadState(playerNum, state);
         g_splitScreenWeaponRepeatDir[playerNum] = 0;
@@ -1148,8 +1139,6 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
         g_splitScreenWeaponPulseDir[playerNum] = 0;
         g_splitScreenWeaponPulseFrames[playerNum] = 0;
         g_splitScreenAimLastTicks[playerNum] = 0;
-        if ((pPlayer->gm & (MODE_MENU | MODE_TYPE)) != 0)
-            g_splitScreenPausePulseFrames[playerNum] = 0;
         return;
     }
 
@@ -1194,7 +1183,6 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
     input.bits |= ((uint32_t)G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Open) << SK_OPEN);
     input.bits |= ((uint32_t)G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Quick_Kick) << SK_QUICK_KICK);
     input.bits |= ((uint32_t)G_GamepadFunctionPressed(playerNum, controllerProfile, state, gamefunc_Center_View) << SK_CENTER_VIEW);
-    input.bits |= ((uint32_t)pausePressed << SK_PAUSE);
     input.bits |= ((uint32_t)G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Inventory) << SK_INVENTORY);
     input.bits |= ((uint32_t)G_GamepadFunctionHeld(controllerProfile, state, gamefunc_MedKit) << SK_MEDKIT);
     input.bits |= ((uint32_t)G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Holster_Weapon) << SK_HOLSTER);
@@ -1257,9 +1245,6 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
         if (--g_splitScreenWeaponPulseFrames[playerNum] == 0)
             g_splitScreenWeaponPulseDir[playerNum] = 0;
     }
-
-    if (g_splitScreenPausePulseFrames[playerNum] > 0)
-        --g_splitScreenPausePulseFrames[playerNum];
 
     bool const semiautoWeapon = (PWEAPON(playerNum, pPlayer->curr_weapon, Flags) & WEAPON_SEMIAUTO) != 0;
     bool const fireActive     = semiautoWeapon ? firePressed : fireHeld;

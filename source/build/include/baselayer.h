@@ -347,6 +347,8 @@ void mouseGrabInput(bool grab);
 void mouseLockToWindow(char a);
 int32_t mouseReadButtons(void);
 int32_t joyGetConnectedGamepadCount(void);
+int32_t joyGetPrimaryGamepadIndex(void);
+void joySetPrimaryGamepadIndex(int32_t gamepadIndex);
 int32_t joyGetGamepadState(int32_t gamepadIndex, gamepadstate_t *state);
 void joyAddGamepadRumble(int32_t gamepadIndex, uint16_t low, uint16_t high, uint16_t time);
 void mouseReadPos(int32_t *x, int32_t *y);

@@ -37,6 +37,8 @@ extern int32_t I_AdvanceTrigger(void);
 extern int32_t I_GeneralTrigger(void);
 extern int32_t I_ReturnTrigger(void);
 extern int32_t I_EscapeTrigger(void);
+extern int32_t I_GetMenuAdvanceGamepadIndex(void);
+extern int32_t I_MenuGamepadActivity(void);
 
 extern void I_AdvanceTriggerClear(void);
 extern void I_GeneralTriggerClear(void);

@@ -834,6 +834,7 @@ static uint16_t gameControllerRumbleLow[MAX_LOCAL_GAMEPADS];
 static uint16_t gameControllerRumbleHigh[MAX_LOCAL_GAMEPADS];
 static uint16_t gameControllerRumbleTime[MAX_LOCAL_GAMEPADS];
 static uint32_t gameControllerRumbleZeroTime[MAX_LOCAL_GAMEPADS];
+static int32_t primaryGameControllerIndex;
 static int32_t numGameControllers;
 static bool gameControllerDBLoaded;
 
@@ -917,6 +918,7 @@ void joyScanDevices()
 
 #if SDL_MAJOR_VERSION >= 2
     controller = nullptr;
+    primaryGameControllerIndex = 0;
 
     for (int i = 0; i < MAX_LOCAL_GAMEPADS; ++i)
     {
@@ -990,6 +992,7 @@ void joyScanDevices()
                 continue;
 
             controller = openedController;
+            primaryGameControllerIndex = numGameControllers - 1;
 
 #if SDL_VERSION_ATLEAST(2, 0, 14)
                 if (EDUKE32_SDL_LINKED_PREREQ(linked, 2, 0, 14))
@@ -1203,6 +1206,7 @@ void uninitinput(void)
 
 #if SDL_MAJOR_VERSION >= 2
     controller = nullptr;
+    primaryGameControllerIndex = 0;
     numGameControllers = 0;
 
     for (int i = 0; i < MAX_LOCAL_GAMEPADS; ++i)
@@ -2506,7 +2510,7 @@ int32_t handleevents_sdlcommon(SDL_Event *ev)
                 g_controllerHotplugCallback();
             break;
         case SDL_CONTROLLERAXISMOTION:
-            if (!joystick.isGameController || ev->caxis.which != gameControllerInstanceIds[0])
+            if (!joystick.isGameController || ev->caxis.which != gameControllerInstanceIds[primaryGameControllerIndex])
                 break;
 
             if (appactive && ev->caxis.axis < joystick.numAxes)
@@ -2569,7 +2573,7 @@ int32_t handleevents_sdlcommon(SDL_Event *ev)
 #if SDL_MAJOR_VERSION >= 2
         case SDL_CONTROLLERBUTTONDOWN:
         case SDL_CONTROLLERBUTTONUP:
-            if (!joystick.isGameController || ev->cbutton.which != gameControllerInstanceIds[0])
+            if (!joystick.isGameController || ev->cbutton.which != gameControllerInstanceIds[primaryGameControllerIndex])
                 break;
 
             if (appactive && ev->cbutton.button < joystick.numButtons)
@@ -2649,6 +2653,12 @@ int32_t handleevents_pollsdl(void)
             {
                 auto const &sc = ev.key.keysym.scancode;
                 code = keytranslation[sc];
+
+                // Escape is a menu action, not text input. SDL sends repeated
+                // KEYDOWN events while it is held, which can otherwise walk back
+                // through several menus after the initial press.
+                if (ev.key.type == SDL_KEYDOWN && ev.key.repeat && sc == SDL_SCANCODE_ESCAPE)
+                    break;
 
                 // Modifiers that have to be held down to be effective
                 // (excludes KMOD_NUM, for example).
@@ -2999,6 +3009,45 @@ int32_t joyGetConnectedGamepadCount(void)
     return numGameControllers;
 #else
     return 0;
+#endif
+}
+
+int32_t joyGetPrimaryGamepadIndex(void)
+{
+#if SDL_MAJOR_VERSION >= 2
+    return controller != nullptr ? primaryGameControllerIndex : -1;
+#else
+    return -1;
+#endif
+}
+
+void joySetPrimaryGamepadIndex(int32_t const gamepadIndex)
+{
+#if SDL_MAJOR_VERSION >= 2
+    if ((unsigned)gamepadIndex >= (unsigned)numGameControllers || gameControllers[gamepadIndex] == nullptr)
+        return;
+
+    if (primaryGameControllerIndex == gamepadIndex && controller == gameControllers[gamepadIndex])
+        return;
+
+    primaryGameControllerIndex = gamepadIndex;
+    controller = gameControllers[gamepadIndex];
+
+    joystick.bits = 0;
+    if (joystick.pAxis != nullptr)
+        Bmemset(joystick.pAxis, 0, joystick.numAxes * sizeof(int32_t));
+
+    char name[128];
+# if SDL_VERSION_ATLEAST(2, 0, 14)
+    if (EDUKE32_SDL_LINKED_PREREQ(linked, 2, 0, 14))
+        Bsnprintf(name, sizeof(name), "%s [%s]", SDL_GameControllerName(controller), SDL_GameControllerGetSerial(controller));
+    else
+# endif
+        Bsnprintf(name, sizeof(name), "%s", SDL_GameControllerName(controller));
+
+    VLOG_F(LOG_INPUT, "Using controller: %s.", name);
+#else
+    UNREFERENCED_PARAMETER(gamepadIndex);
 #endif
 }
 

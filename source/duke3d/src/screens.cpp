@@ -1697,6 +1697,7 @@ void G_DisplayRest(int32_t smoothratio)
             (g_player[myconnectindex].ps->gm&MODE_TYPE) != MODE_TYPE)
         {
             I_EscapeTriggerClear();
+            ud.pause_on = 0;
             S_PauseSounds(true);
 
             Menu_Open(myconnectindex);
