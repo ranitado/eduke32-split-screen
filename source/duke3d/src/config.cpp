@@ -529,6 +529,10 @@ void CONFIG_SetDefaults(void)
     ud.config.JoystickAimAssist = 1;
     ud.config.SplitScreenSeparateKeyboardMouse = 0;
     ud.config.SplitScreenHudStyle = HUD_STYLE_SPLITSCREEN;
+    ud.config.SplitScreenPlayerInput[0] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+    ud.config.SplitScreenPlayerInput[1] = SPLITSCREEN_INPUT_GAMEPAD1;
+    ud.config.SplitScreenPlayerInput[2] = SPLITSCREEN_INPUT_GAMEPAD2;
+    ud.config.SplitScreenPlayerInput[3] = SPLITSCREEN_INPUT_GAMEPAD3;
     for (int i = 0; i < MAXSPLITSCREENCONTROLLERPROFILES; ++i)
     {
         ud.config.SplitScreenJoystickAimWeight[i] = ud.config.JoystickAimWeight;
@@ -1450,6 +1454,10 @@ int CONFIG_ReadSetup(void)
     {
         int const playerNumber = i + 1;
 
+        Bsprintf(tempbuf, "SplitScreenPlayer%dInput", playerNumber);
+        SCRIPT_GetNumber(ud.config.scripthandle, "Controls", tempbuf, &ud.config.SplitScreenPlayerInput[i]);
+        ud.config.SplitScreenPlayerInput[i] = G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[i]);
+
         Bsprintf(tempbuf, "SplitScreenPlayer%dAutoAim", playerNumber);
         SCRIPT_GetNumber(ud.config.scripthandle, "Controls", tempbuf, &ud.config.SplitScreenPlayerAutoAim[i]);
 
@@ -1788,6 +1796,11 @@ void CONFIG_WriteSetup(uint32_t flags)
         if (CONFIG_IsBlankPlayerName(ud.config.SplitScreenPlayerName[i]))
             CONFIG_SetDefaultSplitScreenPlayerName(i);
 
+        ud.config.SplitScreenPlayerInput[i] = G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[i]);
+
+        Bsprintf(buf, "SplitScreenPlayer%dInput", playerNumber);
+        SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, ud.config.SplitScreenPlayerInput[i], FALSE, FALSE);
+
         Bsprintf(buf, "SplitScreenPlayer%dAutoAim", playerNumber);
         SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, ud.config.SplitScreenPlayerAutoAim[i], FALSE, FALSE);
 
@@ -1939,5 +1952,89 @@ int CONFIG_SetMapBestTime(uint8_t const * const mapmd4, int32_t tm)
     CONFIG_GetMD4EntryName(m, mapmd4);
     SCRIPT_PutNumber(ud.config.scripthandle, "MapTimes", m, tm, FALSE, FALSE);
 
+    return 0;
+}
+
+static void CONFIG_GetSplitScreenLevelProgressKey(char * const key, size_t const keySize, int32_t const addonNum, int32_t const volumeNum, int32_t const levelNum, char const * const suffix)
+{
+    Bsnprintf(key, keySize, "A%d_E%dL%d_%s", addonNum, volumeNum + 1, levelNum + 1, suffix);
+}
+
+static int32_t CONFIG_EnsureSetupScriptForProgress(int32_t const createIfMissing)
+{
+    if (ud.config.scripthandle >= 0)
+        return 1;
+
+    if (buildvfs_exists(g_setupFileName))
+        ud.config.scripthandle = SCRIPT_Load(g_setupFileName);
+
+    if (ud.config.scripthandle < 0 && createIfMissing)
+        ud.config.scripthandle = SCRIPT_Init(g_setupFileName);
+
+    return ud.config.scripthandle >= 0;
+}
+
+int32_t CONFIG_GetSplitScreenLevelProgress(int32_t const addonNum, int32_t const volumeNum, int32_t const levelNum, int32_t * const played, int32_t * const secrets, int32_t * const maxSecrets, int32_t * const bestTime)
+{
+    if (played != nullptr)
+        *played = 0;
+    if (secrets != nullptr)
+        *secrets = 0;
+    if (maxSecrets != nullptr)
+        *maxSecrets = 0;
+    if (bestTime != nullptr)
+        *bestTime = 0;
+
+    if ((unsigned)volumeNum >= MAXVOLUMES || (unsigned)levelNum >= MAXLEVELS || !CONFIG_EnsureSetupScriptForProgress(0))
+        return 0;
+
+    char key[64];
+    int32_t value = 0;
+
+    CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "Played");
+    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0 && played != nullptr)
+        *played = value != 0;
+
+    CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "Secrets");
+    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0 && secrets != nullptr)
+        *secrets = max<int32_t>(value, 0);
+
+    CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "MaxSecrets");
+    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0 && maxSecrets != nullptr)
+        *maxSecrets = max<int32_t>(value, 0);
+
+    CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "BestTime");
+    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0 && bestTime != nullptr)
+        *bestTime = max<int32_t>(value, 0);
+
+    return played == nullptr || *played != 0;
+}
+
+int CONFIG_SetSplitScreenLevelProgress(int32_t const addonNum, int32_t const volumeNum, int32_t const levelNum, int32_t const secrets, int32_t const maxSecrets, int32_t const bestTime)
+{
+    if ((unsigned)volumeNum >= MAXVOLUMES || (unsigned)levelNum >= MAXLEVELS || !CONFIG_EnsureSetupScriptForProgress(1))
+        return -1;
+
+    int32_t oldPlayed = 0, oldSecrets = 0, oldMaxSecrets = 0, oldBestTime = 0;
+    CONFIG_GetSplitScreenLevelProgress(addonNum, volumeNum, levelNum, &oldPlayed, &oldSecrets, &oldMaxSecrets, &oldBestTime);
+
+    char key[64];
+    CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "Played");
+    SCRIPT_PutNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, 1, FALSE, FALSE);
+
+    CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "Secrets");
+    SCRIPT_PutNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, max<int32_t>(oldSecrets, secrets), FALSE, FALSE);
+
+    CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "MaxSecrets");
+    SCRIPT_PutNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, max<int32_t>(oldMaxSecrets, maxSecrets), FALSE, FALSE);
+
+    if (bestTime > 0)
+    {
+        CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "BestTime");
+        SCRIPT_PutNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key,
+                         oldBestTime > 0 ? min<int32_t>(oldBestTime, bestTime) : bestTime, FALSE, FALSE);
+    }
+
+    SCRIPT_Save(ud.config.scripthandle, g_setupFileName);
     return 0;
 }

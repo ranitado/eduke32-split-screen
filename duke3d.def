@@ -1,3 +1,4 @@
 include "splitscreen_rpg.def"
 include "splitscreen_logo.def"
 include "splitscreen_hud.def"
+include "splitscreen_levelthumbs.def"

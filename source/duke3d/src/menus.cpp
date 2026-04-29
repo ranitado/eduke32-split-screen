@@ -42,7 +42,13 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "joystick.h"
 #include "splitscreen.h"
 
+#ifdef _WIN32
+# include <cstdio>
+#endif
+
 EDUKE32_NORETURN void app_exit(int returnCode);
+
+#define SPLITSCREEN_MOD_VERSION "v0.5"
 
 #ifndef __ANDROID__
 droidinput_t droidinput;
@@ -65,11 +71,29 @@ static int32_t Menu_GetEpisodeMenuStyleEntryCount(int32_t showUserMap);
 static void Menu_SetEpisodeStyleOffset(int32_t entryCount);
 static void Menu_CommitPendingSimpleGameState(void);
 static void Menu_PopulateSimpleLevelMenu(int32_t volumeIndex);
+static void Menu_PopulateReplayLevelMenu(void);
+static void Menu_DrawReplayLevelDetails(vec2_t const origin);
+static void Menu_MoveReplayLevelSelection(int32_t direction);
+static int32_t Menu_CanUseReplayLevels(void);
 static void Menu_SelectFirstEpisodeOfCurrentContent(void);
 static int32_t Menu_GetSkillSound(int32_t skillIndex);
 static void Menu_RefreshSkillMenuNames(void);
 static void Menu_StartConfiguredGame(int32_t skillIndex, int32_t skillSound);
 static void Menu_StartGameWithoutSkill(void);
+static void Menu_StartReplayLevel(void);
+#ifdef _WIN32
+static void Menu_StartSplitScreenUpdateCheck(void);
+static void Menu_InstallSplitScreenUpdate(void);
+static void Menu_UpdateSplitScreenUpdateCheck(void);
+#endif
+
+int32_t m_mouselastactivity;
+#if !defined EDUKE32_TOUCH_DEVICES
+int32_t m_mousewake_watchpoint, m_menuchange_watchpoint;
+#endif
+int32_t m_mousecaught;
+static vec2_t m_prevmousepos, m_mousepos, m_mousedownpos;
+static int32_t Menu_MouseOutsideBounds(vec2_t const *pos, int32_t x, int32_t y, int32_t width, int32_t height);
 
 static FORCE_INLINE void Menu_StartTextInput()
 {
@@ -241,6 +265,9 @@ MenuGameplayEntry g_MenuGameplayEntries[MAXMENUGAMEPLAYENTRIES];
 MenuFont_t MF_Redfont =               { { 5<<16, 15<<16 },  { 0, 0 }, 0,        65536,              20<<16,             110<<16,            65536,              TEXT_BIGALPHANUM | TEXT_UPPERCASE,
                                         -1,                 10,                 0,                  0,                  0,                  0,                  1,
                                         0,                  0,                  1 };
+static MenuFont_t MF_RedfontBlue =    { { 5<<16, 15<<16 },  { 0, 0 }, 0,        65536,              20<<16,             110<<16,            65536,              TEXT_BIGALPHANUM | TEXT_UPPERCASE,
+                                        -1,                 10,                 0,                  16,                 16,                 16,                 16,
+                                        16,                 16,                 16 };
 MenuFont_t MF_Bluefont =              { { 5<<16, 7<<16 },   { 0, 0 }, 0,        65536,              10<<16,             110<<16,            32768,              0,
                                         -1,                 10,                 0,                  0,                  10,                 10,                 16,
                                         0,                  0,                  16 };
@@ -250,9 +277,11 @@ MenuFont_t MF_Minifont =              { { 4<<16, 5<<16 },   { 1<<16, 1<<16 },0, 
 
 
 static MenuMenuFormat_t MMF_Top_Main =             { {  MENU_MARGIN_CENTER<<16, 55<<16, }, -(170<<16) };
+static MenuMenuFormat_t MMF_Top_MainInGame =       { {  MENU_MARGIN_CENTER<<16, 56<<16, }, 190<<16 };
 static MenuMenuFormat_t MMF_Top_Episode =          { {  MENU_MARGIN_CENTER<<16, 48<<16, }, -(190<<16) };
 static MenuMenuFormat_t MMF_Top_ExtraContent =     { {  MENU_MARGIN_CENTER<<16, 68<<16, }, -(190<<16) };
 static MenuMenuFormat_t MMF_Top_LevelSelect =      { {  MENU_MARGIN_CENTER<<16, 50<<16, }, 186<<16 };
+static MenuMenuFormat_t MMF_Top_LevelReplay =      { {  MENU_MARGIN_CENTER<<16, 163<<16, }, 178<<16 };
 static MenuMenuFormat_t MMF_Top_NewGameCustom =    { {  MENU_MARGIN_CENTER<<16, 48<<16, }, -(190<<16) };
 static MenuMenuFormat_t MMF_Top_NewGameCustomSub = { {  MENU_MARGIN_CENTER<<16, 48<<16, }, -(190<<16) };
 static MenuMenuFormat_t MMF_Top_NewGameCustomL3 =  { {  MENU_MARGIN_CENTER<<16, 48<<16, }, -(190<<16) };
@@ -285,6 +314,7 @@ static MenuEntryFormat_t MEF_OptionsMenu =      { 7<<16,      0,          0 };
 static MenuEntryFormat_t MEF_LeftMenu =         { 7<<16,      0,    120<<16 };
 static MenuEntryFormat_t MEF_CenterMenu =       { 7<<16,      0,          0 };
 static MenuEntryFormat_t MEF_LevelSelect =      { 10<<16,     0,          0 };
+static MenuEntryFormat_t MEF_LevelReplay =      { 4<<16,      0,    126<<16 };
 static MenuEntryFormat_t MEF_BigOptions_Apply = { 4<<16, 16<<16, -(260<<16) };
 static MenuEntryFormat_t MEF_BigOptionsRt =     { 4<<16,      0, -(260<<16) };
 static MenuEntryFormat_t MEF_BigOptionsRtSections = { 3<<16,      0, -(260<<16) };
@@ -390,6 +420,7 @@ MAKE_MENU_TOP_ENTRYLINK( s_NewGame, MEF_MainMenu, MAIN_NEWGAME_INGAME, MENU_GAME
 static MenuLink_t MEO_MAIN_NEWGAME_NETWORK = { MENU_NETWORK, MA_Advance, };
 MAKE_MENU_TOP_ENTRYLINK( s_SaveGame, MEF_MainMenu, MAIN_SAVEGAME, MENU_SAVE );
 MAKE_MENU_TOP_ENTRYLINK( s_LoadGame, MEF_MainMenu, MAIN_LOADGAME, MENU_LOAD );
+MAKE_MENU_TOP_ENTRYLINK( "Levels", MEF_MainMenu, MAIN_LEVELS, MENU_LEVELREPLAY );
 MAKE_MENU_TOP_ENTRYLINK( s_Options, MEF_MainMenu, MAIN_OPTIONS, MENU_OPTIONS );
 #ifdef EDUKE32_STANDALONE
 MAKE_MENU_TOP_ENTRYLINK( "Read me!", MEF_MainMenu, MAIN_HELP, MENU_STORY );
@@ -424,6 +455,7 @@ static MenuEntry_t *MEL_MAIN_INGAME[] = {
 #endif
     &ME_MAIN_SAVEGAME,
     &ME_MAIN_LOADGAME,
+    &ME_MAIN_LEVELS,
     &ME_MAIN_OPTIONS,
     &ME_MAIN_HELP,
     &ME_MAIN_QUITTOTITLE,
@@ -510,6 +542,17 @@ static MenuEntry_t ME_LEVEL_TEMPLATE = MAKE_MENUENTRY( NULL, &MF_Redfont, &MEF_L
 static MenuEntry_t ME_LEVEL[MAXLEVELS];
 static MenuEntry_t *MEL_LEVEL[MAXLEVELS];
 static int32_t g_simpleLevelIndices[MAXLEVELS];
+static MenuLink_t MEO_REPLAY_LEVEL_GOTO = { MENU_LEVELREPLAYVERIFY, MA_Advance, };
+static MenuEntry_t ME_REPLAY_LEVEL_GOTO = MAKE_MENUENTRY( "Go To Level", &MF_Redfont, &MEF_CenterMenu, &MEO_REPLAY_LEVEL_GOTO, Link );
+static MenuEntry_t *MEL_REPLAY_LEVEL[] = { &ME_REPLAY_LEVEL_GOTO };
+static char g_replayLevelNames[MAXVOLUMES * MAXLEVELS][96];
+static int32_t g_replayLevelVolumes[MAXVOLUMES * MAXLEVELS];
+static int32_t g_replayLevelIndices[MAXVOLUMES * MAXLEVELS];
+static int32_t g_replayLevelSecrets[MAXVOLUMES * MAXLEVELS];
+static int32_t g_replayLevelMaxSecrets[MAXVOLUMES * MAXLEVELS];
+static int32_t g_replayLevelBestTimes[MAXVOLUMES * MAXLEVELS];
+static int32_t g_replayLevelCount = 0;
+static int32_t g_replayLevelSelectedIndex = 0;
 
 static MenuLink_t MEO_NEWGAMECUSTOM_TEMPLATE = { MENU_NEWGAMECUSTOMSUB, MA_Advance, };
 static MenuLink_t MEO_NEWGAMECUSTOM[MAXMENUGAMEPLAYENTRIES];
@@ -554,8 +597,136 @@ static MenuEntry_t ME_CONTROLS_AIM_AUTO = MAKE_MENUENTRY( "Auto aim:", &MF_Redfo
 static MenuOption_t MEO_GAMESETUP_ALWAYS_RUN = MAKE_MENUOPTION( &MF_Redfont, &MEOS_NoYes, &ud.auto_run);
 static MenuEntry_t ME_GAMESETUP_ALWAYS_RUN = MAKE_MENUENTRY( "Always run:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_GAMESETUP_ALWAYS_RUN, Option );
 
-static MenuOption_t MEO_CONTROLS_SEPARATE_INPUT = MAKE_MENUOPTION( &MF_Redfont, &MEOS_NoYes, &ud.config.SplitScreenSeparateKeyboardMouse );
-static MenuEntry_t ME_CONTROLS_SEPARATE_INPUT = MAKE_MENUENTRY( "Separate KB/M pads:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_CONTROLS_SEPARATE_INPUT, Option );
+MAKE_MENU_TOP_ENTRYLINK( "Assign Input", MEF_BigOptionsRt, CONTROLS_ASSIGNINPUT, MENU_ASSIGNINPUT );
+
+static char const * const MEOSN_ASSIGNINPUT_PAD[] = { "Pad 1", "Pad 2", "Pad 3", "Pad 4" };
+static char const * const MEOSN_ASSIGNINPUT_KB_PAD[] = { "KB and Pad 1", "KB and Pad 2", "KB and Pad 3", "KB and Pad 4" };
+static int32_t const MEOSV_ASSIGNINPUT_KB_PAD[] = {
+    SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1,
+    SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD2,
+    SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD3,
+    SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4,
+};
+static char const *MEOSN_ASSIGNINPUT_PLAYER1_INPUT[MAXSPLITSCREENCONTROLLERS + 2];
+static int32_t MEOSV_ASSIGNINPUT_PLAYER1_INPUT[MAXSPLITSCREENCONTROLLERS + 2];
+static char const *MEOSN_ASSIGNINPUT_OTHER_INPUT[MAXSPLITSCREENCONTROLLERS + 2];
+static int32_t MEOSV_ASSIGNINPUT_OTHER_INPUT[MAXSPLITSCREENCONTROLLERS + 2];
+static MenuOptionSet_t MEOS_ASSIGNINPUT_PLAYER1_INPUT = MAKE_MENUOPTIONSETDYN( MEOSN_ASSIGNINPUT_PLAYER1_INPUT, MEOSV_ASSIGNINPUT_PLAYER1_INPUT, 1, 0x2 );
+static MenuOptionSet_t MEOS_ASSIGNINPUT_OTHER_INPUT = MAKE_MENUOPTIONSETDYN( MEOSN_ASSIGNINPUT_OTHER_INPUT, MEOSV_ASSIGNINPUT_OTHER_INPUT, 1, 0x2 );
+
+static MenuOption_t MEO_ASSIGNINPUT_PLAYER1 = MAKE_MENUOPTION( &MF_Redfont, &MEOS_ASSIGNINPUT_PLAYER1_INPUT, &ud.config.SplitScreenPlayerInput[0] );
+static MenuEntry_t ME_ASSIGNINPUT_PLAYER1 = MAKE_MENUENTRY( "Player 1:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_ASSIGNINPUT_PLAYER1, Option );
+static MenuOption_t MEO_ASSIGNINPUT_PLAYER2 = MAKE_MENUOPTION( &MF_Redfont, &MEOS_ASSIGNINPUT_OTHER_INPUT, &ud.config.SplitScreenPlayerInput[1] );
+static MenuEntry_t ME_ASSIGNINPUT_PLAYER2 = MAKE_MENUENTRY( "Player 2:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_ASSIGNINPUT_PLAYER2, Option );
+static MenuOption_t MEO_ASSIGNINPUT_PLAYER3 = MAKE_MENUOPTION( &MF_Redfont, &MEOS_ASSIGNINPUT_OTHER_INPUT, &ud.config.SplitScreenPlayerInput[2] );
+static MenuEntry_t ME_ASSIGNINPUT_PLAYER3 = MAKE_MENUENTRY( "Player 3:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_ASSIGNINPUT_PLAYER3, Option );
+static MenuOption_t MEO_ASSIGNINPUT_PLAYER4 = MAKE_MENUOPTION( &MF_Redfont, &MEOS_ASSIGNINPUT_OTHER_INPUT, &ud.config.SplitScreenPlayerInput[3] );
+static MenuEntry_t ME_ASSIGNINPUT_PLAYER4 = MAKE_MENUENTRY( "Player 4:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_ASSIGNINPUT_PLAYER4, Option );
+static MenuOption_t MEO_ASSIGNINPUT_P1_KB_PAD = MAKE_MENUOPTION( &MF_Redfont, &MEOS_NoYes, &ud.config.SplitScreenSeparateKeyboardMouse );
+static MenuEntry_t ME_ASSIGNINPUT_P1_KB_PAD = MAKE_MENUENTRY( "p1 kb and pad:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_ASSIGNINPUT_P1_KB_PAD, Option );
+
+static bool Menu_AssignInputOptionSetHasValue(MenuOptionSet_t const * const options, int32_t const value)
+{
+    for (int32_t i = 0; i < options->numOptions; ++i)
+        if (options->optionValues[i] == value)
+            return true;
+
+    return false;
+}
+
+static int32_t Menu_NormalizeAssignInputForMenu(int32_t input)
+{
+    input = G_NormalizeSplitScreenInput(input);
+    if (!ud.config.SplitScreenSeparateKeyboardMouse && input >= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 && input <= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4)
+        return SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+
+    return input;
+}
+
+static void Menu_PopulateAssignInputOptions(void)
+{
+    int optionCount = 0;
+
+    if (ud.config.SplitScreenSeparateKeyboardMouse)
+    {
+        for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
+        {
+            MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = MEOSN_ASSIGNINPUT_KB_PAD[gamepadIndex];
+            MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 + gamepadIndex;
+            ++optionCount;
+        }
+
+        MEOS_ASSIGNINPUT_PLAYER1_INPUT.numOptions = optionCount;
+    }
+    else
+    {
+        MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = "KB/Mouse";
+        MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+        ++optionCount;
+
+        for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
+        {
+            MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = MEOSN_ASSIGNINPUT_PAD[gamepadIndex];
+            MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
+            ++optionCount;
+        }
+
+        MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = "None";
+        MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_NONE;
+        ++optionCount;
+
+        MEOS_ASSIGNINPUT_PLAYER1_INPUT.numOptions = optionCount;
+    }
+
+    optionCount = 0;
+    if (!ud.config.SplitScreenSeparateKeyboardMouse)
+    {
+        MEOSN_ASSIGNINPUT_OTHER_INPUT[optionCount] = "KB/Mouse";
+        MEOSV_ASSIGNINPUT_OTHER_INPUT[optionCount] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+        ++optionCount;
+    }
+    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
+    {
+        MEOSN_ASSIGNINPUT_OTHER_INPUT[optionCount] = MEOSN_ASSIGNINPUT_PAD[gamepadIndex];
+        MEOSV_ASSIGNINPUT_OTHER_INPUT[optionCount] = SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
+        ++optionCount;
+    }
+
+    MEOSN_ASSIGNINPUT_OTHER_INPUT[optionCount] = "None";
+    MEOSV_ASSIGNINPUT_OTHER_INPUT[optionCount] = SPLITSCREEN_INPUT_NONE;
+    ++optionCount;
+
+    MEOS_ASSIGNINPUT_OTHER_INPUT.numOptions = optionCount;
+
+    for (int playerNum = 0; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
+    {
+        ud.config.SplitScreenPlayerInput[playerNum] = Menu_NormalizeAssignInputForMenu(ud.config.SplitScreenPlayerInput[playerNum]);
+
+        MenuOptionSet_t const * const options = playerNum == 0 ? &MEOS_ASSIGNINPUT_PLAYER1_INPUT : &MEOS_ASSIGNINPUT_OTHER_INPUT;
+        if (!Menu_AssignInputOptionSetHasValue(options, ud.config.SplitScreenPlayerInput[playerNum]))
+        {
+            if (playerNum == 0)
+                ud.config.SplitScreenPlayerInput[playerNum] = ud.config.SplitScreenSeparateKeyboardMouse ? SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 : SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+            else if (ud.config.SplitScreenSeparateKeyboardMouse && G_SplitScreenInputHasKeyboardMouse(ud.config.SplitScreenPlayerInput[playerNum]))
+                ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_NONE;
+            else
+                ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_NONE;
+        }
+    }
+}
+
+static int32_t Menu_IsAssignInputDisconnected(int32_t const input)
+{
+    int32_t const gamepadIndex = G_GetSplitScreenInputGamepadIndex(input);
+    if (gamepadIndex < 0)
+        return 0;
+
+    if (gamepadIndex >= joyGetConnectedGamepadCount())
+        return 1;
+
+    gamepadstate_t state {};
+    return joyGetGamepadState(gamepadIndex, &state) != 0 || !state.connected;
+}
 
 static char const *MEOSN_CONTROLS_PLAYER[] = { "Player 1", "Player 2", "Player 3", "Player 4", };
 static int32_t MEOSV_CONTROLS_PLAYER[] = { 0, 1, 2, 3, };
@@ -584,6 +755,10 @@ static MenuEntry_t ME_GAMESETUP_DEMOREC = MAKE_MENUENTRY( "Record demo:", &MF_Re
 #ifdef _WIN32
 static MenuOption_t MEO_GAMESETUP_UPDATES = MAKE_MENUOPTION( &MF_Redfont, &MEOS_NoYes, &ud.config.CheckForUpdates );
 static MenuEntry_t ME_GAMESETUP_UPDATES = MAKE_MENUENTRY( "Online updates:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_GAMESETUP_UPDATES, Option );
+static MenuLink_t MEO_GAMESETUP_CHECKUPDATES = { MENU_UPDATECHECK, MA_None, };
+static MenuEntry_t ME_GAMESETUP_CHECKUPDATES = MAKE_MENUENTRY( "Check updates", &MF_Redfont, &MEF_BigOptionsRt, &MEO_GAMESETUP_CHECKUPDATES, Link );
+static MenuLink_t MEO_GAMESETUP_INSTALLUPDATE = { MENU_UPDATECHECK, MA_None, };
+static MenuEntry_t ME_GAMESETUP_INSTALLUPDATE = MAKE_MENUENTRY( "Install update", &MF_Redfont, &MEF_BigOptionsRt, &MEO_GAMESETUP_INSTALLUPDATE, Link );
 #endif
 
 static MenuOption_t MEO_ADULTMODE = MAKE_MENUOPTION(&MF_Redfont, &MEOS_OffOn, &ud.lockout);
@@ -609,6 +784,11 @@ static MenuEntry_t *MEL_GAMESETUP[] = {
     &ME_GAMESETUP_STARTWIN,
 #endif
     &ME_GAMESETUP_CHEATS,
+#ifdef _WIN32
+    &ME_Space8_Redfont,
+    &ME_GAMESETUP_CHECKUPDATES,
+    &ME_GAMESETUP_INSTALLUPDATE,
+#endif
 };
 #endif
 
@@ -902,8 +1082,7 @@ static MenuEntry_t *MEL_OPTIONS[] = {
 };
 
 static MenuEntry_t *MEL_CONTROLS[] = {
-    &ME_CONTROLS_SEPARATE_INPUT,
-    &ME_Space6_Redfont,
+    &ME_CONTROLS_ASSIGNINPUT,
 #ifndef EDUKE32_ANDROID_MENU
     &ME_OPTIONS_KEYBOARDSETUP,
     &ME_OPTIONS_MOUSESETUP,
@@ -918,6 +1097,15 @@ static MenuEntry_t *MEL_CONTROLS[] = {
 #ifndef EDUKE32_ANDROID_MENU
     &ME_OPTIONS_JOYSTICKSETUP,
 #endif
+};
+
+static MenuEntry_t *MEL_ASSIGNINPUT[] = {
+    &ME_ASSIGNINPUT_PLAYER1,
+    &ME_ASSIGNINPUT_PLAYER2,
+    &ME_ASSIGNINPUT_PLAYER3,
+    &ME_ASSIGNINPUT_PLAYER4,
+    &ME_Space6_Redfont,
+    &ME_ASSIGNINPUT_P1_KB_PAD,
 };
 
 static MenuEntry_t *MEL_CHEATS[ARRAY_SIZE(ME_CheatCodes)+1] = {
@@ -1656,11 +1844,12 @@ static MenuEntry_t *MEL_NETJOIN[] = {
 #define MAKE_MENUMENU_CUSTOMSIZE(Title, Format, Entries) { Title, Format, Entries, 0, 0, 0, 0 }
 
 static MenuMenu_t M_MAIN = MAKE_MENUMENU( NoTitle, &MMF_Top_Main, MEL_MAIN );
-static MenuMenu_t M_MAIN_INGAME = MAKE_MENUMENU( NoTitle, &MMF_Top_Main, MEL_MAIN_INGAME );
+static MenuMenu_t M_MAIN_INGAME = MAKE_MENUMENU( NoTitle, &MMF_Top_MainInGame, MEL_MAIN_INGAME );
 static MenuMenu_t M_EPISODE = MAKE_MENUMENU( "Select An Episode", &MMF_Top_Episode, MEL_EPISODE );
 static MenuMenu_t M_EXTRACONTENT = MAKE_MENUMENU( "Extra Content", &MMF_Top_ExtraContent, MEL_EXTRACONTENT );
 static MenuMenu_t M_GAMEMODE = MAKE_MENUMENU( "Select Game Type", &MMF_Top_GameModeCentered, MEL_GAMEMODE );
 static MenuMenu_t M_LEVELSELECT = MAKE_MENUMENU( "Select A Level", &MMF_Top_LevelSelect, MEL_LEVEL );
+static MenuMenu_t M_LEVELREPLAY = MAKE_MENUMENU( "Levels", &MMF_Top_LevelReplay, MEL_REPLAY_LEVEL );
 static MenuMenu_t M_PLAYERCOUNT = MAKE_MENUMENU( "Select Players", &MMF_Top_GameModeCentered, MEL_PLAYERCOUNT );
 static MenuMenu_t M_SKILL = MAKE_MENUMENU( "Select Difficulty", &MMF_Top_Skill, MEL_SKILL );
 static MenuMenu_t M_NEWGAMECUSTOM = MAKE_MENUMENU( s_NewGame, &MMF_Top_NewGameCustom, MEL_NEWGAMECUSTOM );
@@ -1673,6 +1862,7 @@ static MenuMenu_t M_OPTIONS = MAKE_MENUMENU( s_Options, &MMF_Top_OptionsCentered
 static MenuMenu_t M_VIDEOSETUP = MAKE_MENUMENU( "Video Mode", &MMF_BigOptions, MEL_VIDEOSETUP );
 static MenuMenu_t M_KEYBOARDSETUP = MAKE_MENUMENU( "Keyboard Setup", &MMF_Top_Options, MEL_KEYBOARDSETUP );
 static MenuMenu_t M_CONTROLS = MAKE_MENUMENU( "Control Setup", &MMF_BigOptions, MEL_CONTROLS );
+static MenuMenu_t M_ASSIGNINPUT = MAKE_MENUMENU( "Assign Input", &MMF_BigOptions, MEL_ASSIGNINPUT );
 static MenuMenu_t M_CHEATS = MAKE_MENUMENU( "Cheats", &MMF_SmallOptions, MEL_CHEATS );
 static MenuMenu_t M_MOUSESETUP = MAKE_MENUMENU( "Mouse Setup", &MMF_BigOptions, MEL_MOUSESETUP );
 #ifdef EDUKE32_ANDROID_MENU
@@ -1734,6 +1924,7 @@ static MenuVerify_t M_LOADDELVERIFY = { CURSOR_CENTER_3LINE, MENU_LOAD, MA_None,
 static MenuVerify_t M_NEWVERIFY = { CURSOR_CENTER_2LINE, MENU_GAMEMODE, MA_Advance, };
 static MenuVerify_t M_SAVEVERIFY = { CURSOR_CENTER_2LINE, MENU_SAVE, MA_None, };
 static MenuVerify_t M_SAVEDELVERIFY = { CURSOR_CENTER_3LINE, MENU_SAVE, MA_None, };
+static MenuVerify_t M_LEVELREPLAYVERIFY = { CURSOR_CENTER_3LINE, MENU_CLOSE, MA_None, };
 static MenuVerify_t M_RESETPLAYER = { CURSOR_CENTER_3LINE, MENU_CLOSE, MA_None, };
 
 static MenuVerify_t M_COLCORRRESETVERIFY = { CURSOR_CENTER_2LINE, MENU_COLCORR, MA_None, };
@@ -1777,6 +1968,8 @@ static Menu_t Menus[] = {
     { &M_ADDONMESSAGE, MENU_ADDONMESSAGE, MENU_EPISODE, MA_Return, Message },
     { &M_EXTRACONTENT, MENU_EXTRACONTENT, MENU_EPISODE, MA_Return, Menu },
     { &M_SKILL, MENU_SKILL, MENU_PREVIOUS, MA_Return, Menu },
+    { &M_LEVELREPLAY, MENU_LEVELREPLAY, MENU_MAIN_INGAME, MA_Return, Menu },
+    { &M_LEVELREPLAYVERIFY, MENU_LEVELREPLAYVERIFY, MENU_LEVELREPLAY, MA_Return, Verify },
 #ifndef EDUKE32_RETAIL_MENU
     { &M_GAMESETUP, MENU_GAMESETUP, MENU_OPTIONS, MA_Return, Menu },
 #endif
@@ -1797,6 +1990,7 @@ static Menu_t Menus[] = {
     { &M_TOUCHBUTTONS, MENU_TOUCHBUTTONS, MENU_TOUCHSETUP, MA_Return, Panel },
 #endif
     { &M_CONTROLS, MENU_CONTROLS, MENU_OPTIONS, MA_Return, Menu },
+    { &M_ASSIGNINPUT, MENU_ASSIGNINPUT, MENU_CONTROLS, MA_Return, Menu },
 #ifdef USE_OPENGL
     { &M_RENDERERSETUP, MENU_RENDERER, MENU_DISPLAYSETUP, MA_Return, Menu },
 #endif
@@ -2014,6 +2208,408 @@ static int32_t Menu_RelaunchWithAddon(int32_t const addonNum, char const * const
     return 0;
 #endif
 }
+
+#ifdef _WIN32
+static char g_updateStatus[128] = "";
+static char g_updateLatestVersion[64] = "";
+static char g_updateDownloadUrl[1024] = "";
+static HANDLE g_updateCheckProcess = nullptr;
+static char g_updateCheckScriptPath[BMAX_PATH] = "";
+static char g_updateCheckResultPath[BMAX_PATH] = "";
+static int32_t g_updateInstallAvailable = 0;
+
+enum SplitScreenUpdateInstallMode_t
+{
+    UPDATE_INSTALL_NONE,
+    UPDATE_INSTALL_NEW_VERSION,
+    UPDATE_INSTALL_REINSTALL_LATEST,
+};
+
+static void Menu_PowerShellQuote(char * const out, size_t const outSize, char const * const in)
+{
+    size_t pos = 0;
+
+    if (outSize == 0)
+        return;
+
+    out[pos++] = '\'';
+
+    for (char const *p = in; *p != '\0' && pos + 2 < outSize; ++p)
+    {
+        out[pos++] = *p;
+        if (*p == '\'' && pos + 1 < outSize)
+            out[pos++] = '\'';
+    }
+
+    if (pos + 1 < outSize)
+        out[pos++] = '\'';
+
+    out[pos] = '\0';
+}
+
+static int32_t Menu_WriteTextFile(char const * const path, char const * const text)
+{
+    FILE * const fp = fopen(path, "wb");
+    if (fp == nullptr)
+        return 0;
+
+    fputs(text, fp);
+    fclose(fp);
+    return 1;
+}
+
+static void Menu_TrimLineEnd(char * const text)
+{
+    size_t length = Bstrlen(text);
+    while (length > 0 && (text[length - 1] == '\r' || text[length - 1] == '\n' || text[length - 1] == ' ' || text[length - 1] == '\t'))
+        text[--length] = '\0';
+}
+
+static int32_t Menu_RunPowerShellScript(char const * const scriptPath, int32_t const waitForExit, int32_t const visible)
+{
+    char commandLine[BMAX_PATH * 2 + 128];
+    Bsnprintf(commandLine, sizeof(commandLine), "\"powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File \"%s\"", scriptPath);
+
+    STARTUPINFOA startupInfo {};
+    PROCESS_INFORMATION processInfo {};
+    startupInfo.cb = sizeof(startupInfo);
+    startupInfo.dwFlags = STARTF_USESHOWWINDOW;
+    startupInfo.wShowWindow = visible ? SW_SHOWNORMAL : SW_HIDE;
+
+    if (!CreateProcessA(nullptr, commandLine, nullptr, nullptr, FALSE, visible ? 0 : CREATE_NO_WINDOW, nullptr, nullptr, &startupInfo, &processInfo))
+        return 0;
+
+    if (waitForExit)
+        WaitForSingleObject(processInfo.hProcess, 30000);
+
+    DWORD exitCode = 1;
+    GetExitCodeProcess(processInfo.hProcess, &exitCode);
+
+    CloseHandle(processInfo.hProcess);
+    CloseHandle(processInfo.hThread);
+
+    return !waitForExit || exitCode == 0;
+}
+
+static HANDLE Menu_StartPowerShellScript(char const * const scriptPath, int32_t const visible)
+{
+    char commandLine[BMAX_PATH * 2 + 128];
+    Bsnprintf(commandLine, sizeof(commandLine), "\"powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File \"%s\"", scriptPath);
+
+    STARTUPINFOA startupInfo {};
+    PROCESS_INFORMATION processInfo {};
+    startupInfo.cb = sizeof(startupInfo);
+    startupInfo.dwFlags = STARTF_USESHOWWINDOW;
+    startupInfo.wShowWindow = visible ? SW_SHOWNORMAL : SW_HIDE;
+
+    if (!CreateProcessA(nullptr, commandLine, nullptr, nullptr, FALSE, visible ? 0 : CREATE_NO_WINDOW, nullptr, nullptr, &startupInfo, &processInfo))
+        return nullptr;
+
+    CloseHandle(processInfo.hThread);
+    return processInfo.hProcess;
+}
+
+static int32_t Menu_ParseVersionNumbers(char const *version, int32_t out[3])
+{
+    out[0] = out[1] = out[2] = 0;
+
+    int32_t count = 0;
+    for (char const *p = version; *p != '\0' && count < 3; )
+    {
+        while (*p != '\0' && (*p < '0' || *p > '9'))
+            ++p;
+
+        if (*p == '\0')
+            break;
+
+        out[count++] = Batol(p);
+
+        while (*p >= '0' && *p <= '9')
+            ++p;
+    }
+
+    return count > 0;
+}
+
+static int32_t Menu_IsVersionNewer(char const * const latest, char const * const current)
+{
+    int32_t latestParts[3], currentParts[3];
+    if (!Menu_ParseVersionNumbers(latest, latestParts) || !Menu_ParseVersionNumbers(current, currentParts))
+        return Bstrcmp(latest, current) != 0;
+
+    for (int32_t i = 0; i < 3; ++i)
+    {
+        if (latestParts[i] > currentParts[i])
+            return 1;
+        if (latestParts[i] < currentParts[i])
+            return 0;
+    }
+
+    return 0;
+}
+
+static int32_t Menu_ReadSplitScreenUpdateResult(char const * const resultPath, char * const version, size_t const versionSize, char * const downloadUrl, size_t const downloadUrlSize)
+{
+    FILE * const fp = fopen(resultPath, "rb");
+    if (fp == nullptr)
+        return 0;
+
+    if (fgets(version, versionSize, fp) == nullptr || fgets(downloadUrl, downloadUrlSize, fp) == nullptr)
+    {
+        fclose(fp);
+        return 0;
+    }
+
+    fclose(fp);
+    Menu_TrimLineEnd(version);
+    Menu_TrimLineEnd(downloadUrl);
+    return version[0] != '\0' && downloadUrl[0] != '\0';
+}
+
+static int32_t Menu_WriteSplitScreenUpdateCheckScript(char const * const scriptPath, char const * const resultPath)
+{
+    char resultPathPS[BMAX_PATH * 2];
+    Menu_PowerShellQuote(resultPathPS, sizeof(resultPathPS), resultPath);
+
+    char script[4096];
+    Bsnprintf(script, sizeof(script),
+        "$ErrorActionPreference='Stop'\r\n"
+        "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12\r\n"
+        "$headers=@{'User-Agent'='DukeSplitScreen'}\r\n"
+        "$rel=Invoke-RestMethod -UseBasicParsing -Headers $headers -Uri 'https://api.github.com/repos/ranitado/eduke32-split-screen/releases/latest'\r\n"
+        "$asset=$rel.assets|Where-Object{$_.name -like '*windows*x64*.zip'}|Select-Object -First 1\r\n"
+        "if(-not $asset){$asset=$rel.assets|Where-Object{$_.name -like '*.zip'}|Select-Object -First 1}\r\n"
+        "if(-not $asset){throw 'No release zip found'}\r\n"
+        "Set-Content -LiteralPath %s -Encoding ASCII -Value ($rel.tag_name + \"`n\" + $asset.browser_download_url)\r\n",
+        resultPathPS);
+
+    return Menu_WriteTextFile(scriptPath, script);
+}
+
+static int32_t Menu_QueryLatestSplitScreenRelease(char * const version, size_t const versionSize, char * const downloadUrl, size_t const downloadUrlSize)
+{
+    char tempPath[BMAX_PATH];
+    if (!GetTempPathA(ARRAY_SIZE(tempPath), tempPath))
+        return 0;
+
+    char scriptPath[BMAX_PATH], resultPath[BMAX_PATH];
+    Bsnprintf(scriptPath, sizeof(scriptPath), "%seduke32-split-screen-check-%lu.ps1", tempPath, (unsigned long)GetCurrentProcessId());
+    Bsnprintf(resultPath, sizeof(resultPath), "%seduke32-split-screen-check-%lu.txt", tempPath, (unsigned long)GetCurrentProcessId());
+
+    if (!Menu_WriteSplitScreenUpdateCheckScript(scriptPath, resultPath))
+        return 0;
+
+    int32_t const ok = Menu_RunPowerShellScript(scriptPath, 1, 0);
+    remove(scriptPath);
+
+    if (!ok)
+    {
+        remove(resultPath);
+        return 0;
+    }
+
+    int32_t const readOk = Menu_ReadSplitScreenUpdateResult(resultPath, version, versionSize, downloadUrl, downloadUrlSize);
+    remove(resultPath);
+    return readOk;
+}
+
+static int32_t Menu_LaunchSplitScreenUpdater(char const * const downloadUrl)
+{
+    char exePath[BMAX_PATH];
+    if (GetModuleFileNameA(nullptr, exePath, ARRAY_SIZE(exePath)) == 0)
+        return 0;
+
+    char rootPath[BMAX_PATH];
+    Bstrncpyz(rootPath, exePath, sizeof(rootPath));
+    char * const slash = Bstrrchr(rootPath, '\\');
+    if (slash == nullptr)
+        return 0;
+    *slash = '\0';
+
+    char tempPath[BMAX_PATH];
+    if (!GetTempPathA(ARRAY_SIZE(tempPath), tempPath))
+        return 0;
+
+    char scriptPath[BMAX_PATH];
+    Bsnprintf(scriptPath, sizeof(scriptPath), "%seduke32-split-screen-updater-%lu.ps1", tempPath, (unsigned long)GetCurrentProcessId());
+
+    char rootPathPS[BMAX_PATH * 2], exePathPS[BMAX_PATH * 2], downloadUrlPS[2048], updateVersionPS[256], scriptPathPS[BMAX_PATH * 2];
+    Menu_PowerShellQuote(rootPathPS, sizeof(rootPathPS), rootPath);
+    Menu_PowerShellQuote(exePathPS, sizeof(exePathPS), exePath);
+    Menu_PowerShellQuote(downloadUrlPS, sizeof(downloadUrlPS), downloadUrl);
+    Menu_PowerShellQuote(updateVersionPS, sizeof(updateVersionPS), g_updateLatestVersion[0] != '\0' ? g_updateLatestVersion : "latest version");
+    Menu_PowerShellQuote(scriptPathPS, sizeof(scriptPathPS), scriptPath);
+
+    char script[12288];
+    Bsnprintf(script, sizeof(script),
+        "$ErrorActionPreference='Stop'\r\n"
+        "$Host.UI.RawUI.WindowTitle='Duke Split Screen Updater'\r\n"
+        "Clear-Host\r\n"
+        "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12\r\n"
+        "$pidToWait=%lu\r\n"
+        "$root=%s\r\n"
+        "$exe=%s\r\n"
+        "$url=%s\r\n"
+        "$version=%s\r\n"
+        "Write-Host ''\r\n"
+        "Write-Host 'Duke Nukem 3D Split-Screen updater' -ForegroundColor Cyan\r\n"
+        "Write-Host ('Updating Duke Split Screen to ' + $version) -ForegroundColor Cyan\r\n"
+        "Write-Host ''\r\n"
+        "Write-Host 'Please wait. Do not close this window.' -ForegroundColor Yellow\r\n"
+        "Write-Host ''\r\n"
+        "Write-Host '[1/5] Waiting for the game to close...'\r\n"
+        "Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue\r\n"
+        "Start-Sleep -Milliseconds 500\r\n"
+        "$zip=Join-Path $env:TEMP 'eduke32-split-screen-update.zip'\r\n"
+        "$tmp=Join-Path $env:TEMP ('eduke32-split-screen-update-'+[guid]::NewGuid().ToString())\r\n"
+        "Write-Host '[2/5] Preparing temporary files...'\r\n"
+        "New-Item -ItemType Directory -Path $tmp -Force|Out-Null\r\n"
+        "Write-Host '[3/5] Downloading update package...'\r\n"
+        "Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zip\r\n"
+        "Write-Host '[4/5] Extracting update package...'\r\n"
+        "Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force\r\n"
+        "$src=$tmp\r\n"
+        "$dirs=@(Get-ChildItem -LiteralPath $tmp -Directory)\r\n"
+        "if($dirs.Count -eq 1 -and ((Test-Path (Join-Path $dirs[0].FullName 'eduke32-split-screen.exe')) -or (Test-Path (Join-Path $dirs[0].FullName 'DukeSplitScreen.exe')))){$src=$dirs[0].FullName}\r\n"
+        "Write-Host '[5/5] Installing files...'\r\n"
+        "Get-ChildItem -LiteralPath $src -Recurse -File|ForEach-Object{\r\n"
+        "  $rel=$_.FullName.Substring($src.Length).TrimStart('\\','/')\r\n"
+        "  if(($rel -notmatch '^(saves|save|screenshots)[\\\\/]') -and ($_.Name -notlike '*.grp') -and ($_.Name -notlike '*.cfg') -and ($_.Name -notlike '*.sav')){\r\n"
+        "    $dest=Join-Path $root $rel\r\n"
+        "    New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force|Out-Null\r\n"
+        "    Copy-Item -LiteralPath $_.FullName -Destination $dest -Force\r\n"
+        "  }\r\n"
+        "}\r\n"
+        "Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue\r\n"
+        "Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue\r\n"
+        "Write-Host ''\r\n"
+        "Write-Host 'Update installed. Restarting Duke Split Screen...' -ForegroundColor Green\r\n"
+        "Start-Sleep -Seconds 1\r\n"
+        "Start-Process -FilePath $exe -WorkingDirectory $root\r\n"
+        "Remove-Item -LiteralPath %s -Force -ErrorAction SilentlyContinue\r\n",
+        (unsigned long)GetCurrentProcessId(), rootPathPS, exePathPS, downloadUrlPS, updateVersionPS, scriptPathPS);
+
+    if (!Menu_WriteTextFile(scriptPath, script))
+        return 0;
+
+    return Menu_RunPowerShellScript(scriptPath, 0, 1);
+}
+
+static void Menu_FinishSplitScreenUpdateCheck(int32_t const ok)
+{
+    char latestVersion[64], downloadUrl[1024];
+
+    g_updateInstallAvailable = UPDATE_INSTALL_NONE;
+    g_updateLatestVersion[0] = '\0';
+    g_updateDownloadUrl[0] = '\0';
+
+    if (!ok || !Menu_ReadSplitScreenUpdateResult(g_updateCheckResultPath, latestVersion, sizeof(latestVersion), downloadUrl, sizeof(downloadUrl)))
+    {
+        Bstrncpyz(g_updateStatus, "Update check failed", sizeof(g_updateStatus));
+        return;
+    }
+
+    if (!Menu_IsVersionNewer(latestVersion, SPLITSCREEN_MOD_VERSION))
+    {
+        Bstrncpyz(g_updateLatestVersion, latestVersion, sizeof(g_updateLatestVersion));
+        Bstrncpyz(g_updateDownloadUrl, downloadUrl, sizeof(g_updateDownloadUrl));
+        Bsnprintf(g_updateStatus, sizeof(g_updateStatus), "No new updates  Latest: %s", latestVersion);
+        g_updateInstallAvailable = UPDATE_INSTALL_REINSTALL_LATEST;
+        return;
+    }
+
+    Bstrncpyz(g_updateLatestVersion, latestVersion, sizeof(g_updateLatestVersion));
+    Bstrncpyz(g_updateDownloadUrl, downloadUrl, sizeof(g_updateDownloadUrl));
+    Bsnprintf(g_updateStatus, sizeof(g_updateStatus), "Update found: %s", g_updateLatestVersion);
+    g_updateInstallAvailable = UPDATE_INSTALL_NEW_VERSION;
+}
+
+static void Menu_UpdateSplitScreenUpdateCheck(void)
+{
+    if (g_updateCheckProcess == nullptr)
+        return;
+
+    DWORD exitCode = 1;
+    if (!GetExitCodeProcess(g_updateCheckProcess, &exitCode))
+    {
+        CloseHandle(g_updateCheckProcess);
+        g_updateCheckProcess = nullptr;
+        remove(g_updateCheckScriptPath);
+        remove(g_updateCheckResultPath);
+        Bstrncpyz(g_updateStatus, "Update check failed", sizeof(g_updateStatus));
+        return;
+    }
+
+    if (exitCode == STILL_ACTIVE)
+        return;
+
+    CloseHandle(g_updateCheckProcess);
+    g_updateCheckProcess = nullptr;
+    remove(g_updateCheckScriptPath);
+
+    Menu_FinishSplitScreenUpdateCheck(exitCode == 0);
+    remove(g_updateCheckResultPath);
+}
+
+static void Menu_StartSplitScreenUpdateCheck(void)
+{
+    if (g_updateCheckProcess != nullptr)
+    {
+        Bstrncpyz(g_updateStatus, "Searching...", sizeof(g_updateStatus));
+        return;
+    }
+
+    char tempPath[BMAX_PATH];
+    if (!GetTempPathA(ARRAY_SIZE(tempPath), tempPath))
+    {
+        Bstrncpyz(g_updateStatus, "Update check failed", sizeof(g_updateStatus));
+        return;
+    }
+
+    Bsnprintf(g_updateCheckScriptPath, sizeof(g_updateCheckScriptPath), "%seduke32-split-screen-check-%lu.ps1", tempPath, (unsigned long)GetCurrentProcessId());
+    Bsnprintf(g_updateCheckResultPath, sizeof(g_updateCheckResultPath), "%seduke32-split-screen-check-%lu.txt", tempPath, (unsigned long)GetCurrentProcessId());
+    remove(g_updateCheckResultPath);
+
+    g_updateInstallAvailable = UPDATE_INSTALL_NONE;
+    g_updateLatestVersion[0] = '\0';
+    g_updateDownloadUrl[0] = '\0';
+    Bstrncpyz(g_updateStatus, "Searching...", sizeof(g_updateStatus));
+
+    if (!Menu_WriteSplitScreenUpdateCheckScript(g_updateCheckScriptPath, g_updateCheckResultPath))
+    {
+        Bstrncpyz(g_updateStatus, "Update check failed", sizeof(g_updateStatus));
+        return;
+    }
+
+    g_updateCheckProcess = Menu_StartPowerShellScript(g_updateCheckScriptPath, 0);
+    if (g_updateCheckProcess == nullptr)
+    {
+        remove(g_updateCheckScriptPath);
+        Bstrncpyz(g_updateStatus, "Update check failed", sizeof(g_updateStatus));
+    }
+}
+
+static void Menu_InstallSplitScreenUpdate(void)
+{
+    if (g_updateInstallAvailable == UPDATE_INSTALL_NONE || g_updateDownloadUrl[0] == '\0')
+    {
+        Bstrncpyz(g_updateStatus, "No update ready", sizeof(g_updateStatus));
+        return;
+    }
+
+    Bsnprintf(g_updateStatus, sizeof(g_updateStatus), "%s %s...",
+              g_updateInstallAvailable == UPDATE_INSTALL_REINSTALL_LATEST ? "Reinstalling" : "Installing",
+              g_updateLatestVersion);
+    if (!Menu_LaunchSplitScreenUpdater(g_updateDownloadUrl))
+    {
+        Bstrncpyz(g_updateStatus, "Could not start updater", sizeof(g_updateStatus));
+        return;
+    }
+
+    CONFIG_WriteSetup(0);
+    app_exit(EXIT_SUCCESS);
+}
+#endif
 
 static void Menu_ResetTitleScreenTiles(void)
 {
@@ -3265,10 +3861,15 @@ static void Menu_Pre(MenuID_t cm)
     switch (cm)
     {
     case MENU_MAIN_INGAME:
+        MEF_MainMenu.marginBottom = 2<<16;
         MenuEntry_DisableOnCondition(&ME_MAIN_SAVEGAME, ud.recstat == 2);
         MenuEntry_DisableOnCondition(&ME_MAIN_QUITTOTITLE, g_netServer || numplayers > 1);
+        MenuEntry_HideOnCondition(&ME_MAIN_LEVELS, !Menu_CanUseReplayLevels());
         fallthrough__;
     case MENU_MAIN:
+        if (cm == MENU_MAIN)
+            MEF_MainMenu.marginBottom = 4<<16;
+
     {
         bool const splitScreenMultiplayer = G_HaveSplitScreen() || G_GetConfiguredSplitScreenPlayerCount() > 1;
         bool const realMultiplayer = g_netServer || g_netClient || (ud.multimode > 1 && !g_fakeMultiMode && !splitScreenMultiplayer);
@@ -3287,6 +3888,11 @@ static void Menu_Pre(MenuID_t cm)
     }
 
     case MENU_GAMESETUP:
+#ifdef _WIN32
+        Menu_UpdateSplitScreenUpdateCheck();
+        ME_GAMESETUP_INSTALLUPDATE.name = g_updateInstallAvailable == UPDATE_INSTALL_REINSTALL_LATEST ? "Reinstall Latest" : "Install Update";
+        MenuEntry_HideOnCondition(&ME_GAMESETUP_INSTALLUPDATE, g_updateInstallAvailable == UPDATE_INSTALL_NONE);
+#endif
         MEO_GAMESETUP_DEMOREC.options = (ps->gm&MODE_GAME) ? &MEOS_DemoRec : &MEOS_OffOn;
         MenuEntry_DisableOnCondition(&ME_GAMESETUP_DEMOREC, (ps->gm&MODE_GAME) && ud.m_recstat != 1);
         break;
@@ -3620,6 +4226,7 @@ static void Menu_PreDrawBackground(MenuID_t cm, const vec2_t origin)
 
     case MENU_LOAD:
     case MENU_SAVE:
+    case MENU_LEVELREPLAY:
         if (FURY)
             break;
         fallthrough__;
@@ -3748,8 +4355,7 @@ static void Menu_DrawSplitScreenHelp(const vec2_t origin)
         mminitext(origin.x + (172<<16), origin.y + (y<<16), keyboard[i], 8);
     }
 
-    creditsminitext(origin.x + (160<<16), origin.y + (148<<16), "SEPARATE KB/M PADS OFF: KB/M AND PAD 1 BOTH CONTROL P1", 12);
-    creditsminitext(origin.x + (160<<16), origin.y + (160<<16), "IN-GAME: PRESS START ON AN EXTRA CONTROLLER TO JOIN", 12);
+    creditsminitext(origin.x + (160<<16), origin.y + (156<<16), "IN-GAME: PRESS START ON AN EXTRA CONTROLLER TO JOIN", 12);
 }
 #endif
 
@@ -3786,6 +4392,22 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
     case MENU_MACROS:
         mgametextcenter(origin.x, origin.y + (144<<16), "Activate in-game with Shift-F#");
         break;
+
+#ifdef _WIN32
+    case MENU_GAMESETUP:
+        Menu_UpdateSplitScreenUpdateCheck();
+        if (g_updateStatus[0] != '\0')
+            creditsminitext(origin.x + (160<<16), origin.y + (136<<16), g_updateStatus, MF_Minifont.pal_selected);
+        break;
+#endif
+
+    case MENU_LEVELREPLAY:
+    {
+        vec2_t detailOrigin = origin;
+        detailOrigin.y -= 5<<16;
+        Menu_DrawReplayLevelDetails(detailOrigin);
+        break;
+    }
 
 #ifndef EDUKE32_STANDALONE
     case MENU_COLCORR:
@@ -3861,6 +4483,8 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
 #endif
         Menu_BlackRectangle(origin.x + (198<<16), origin.y + ((47+SAVELOAD_LAYOUT_YSHIFT)<<16),
                             102<<16, (135-SAVELOAD_LAYOUT_YSHIFT)<<16, 1);
+        Menu_BlackRectangle(origin.x + (180<<16), origin.y + ((47+SAVELOAD_LAYOUT_YSHIFT)<<16),
+                            18<<16, (135-SAVELOAD_LAYOUT_YSHIFT)<<16, 1);
 
         rotatesprite_fs(origin.x + (22<<16), origin.y + ((97+SAVELOAD_LAYOUT_YSHIFT)<<16), 65536L,0,WINDOWBORDER2,24,0,10);
         rotatesprite_fs(origin.x + (180<<16), origin.y + ((97+SAVELOAD_LAYOUT_YSHIFT)<<16), 65536L,1024,WINDOWBORDER2,24,0,10);
@@ -3916,6 +4540,8 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
 #endif
         Menu_BlackRectangle(origin.x + (198<<16), origin.y + ((47+SAVELOAD_LAYOUT_YSHIFT)<<16),
                             102<<16, (135-SAVELOAD_LAYOUT_YSHIFT)<<16, 1);
+        Menu_BlackRectangle(origin.x + (180<<16), origin.y + ((47+SAVELOAD_LAYOUT_YSHIFT)<<16),
+                            18<<16, (135-SAVELOAD_LAYOUT_YSHIFT)<<16, 1);
 
         rotatesprite_fs(origin.x + (22<<16), origin.y + ((97+SAVELOAD_LAYOUT_YSHIFT)<<16), 65536L,0,WINDOWBORDER2,24,0,10);
         rotatesprite_fs(origin.x + (180<<16), origin.y + ((97+SAVELOAD_LAYOUT_YSHIFT)<<16), 65536L,1024,WINDOWBORDER2,24,0,10);
@@ -4052,6 +4678,11 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
     case MENU_NEWVERIFY:
         videoFadeToBlack(1);
         Menu_DrawVerifyPrompt(origin.x, origin.y, "Abort this game?");
+        break;
+
+    case MENU_LEVELREPLAYVERIFY:
+        videoFadeToBlack(1);
+        Menu_DrawVerifyPrompt(origin.x, origin.y, "Go to this level?\nCurrent progress will be lost.", 2);
         break;
 
     case MENU_COLCORRRESETVERIFY:
@@ -4440,6 +5071,25 @@ static void Menu_PreInput(MenuEntry_t *entry)
         }
         break;
 
+    case MENU_ASSIGNINPUT:
+        Menu_PopulateAssignInputOptions();
+        break;
+
+    case MENU_LEVELREPLAY:
+        if (I_MenuLeft())
+        {
+            I_MenuLeftClear();
+            Menu_MoveReplayLevelSelection(-1);
+            S_PlaySound(KICK_HIT);
+        }
+        else if (I_MenuRight())
+        {
+            I_MenuRightClear();
+            Menu_MoveReplayLevelSelection(1);
+            S_PlaySound(KICK_HIT);
+        }
+        break;
+
     default:
         break;
     }
@@ -4759,6 +5409,301 @@ static void Menu_PopulateSimpleLevelMenu(int32_t const volumeIndex)
     Menu_AdjustForCurrentEntryAssignmentBlind(&M_LEVELSELECT);
 }
 
+static void Menu_GetCurrentCampaignSecrets(int32_t * const secrets, int32_t * const maxSecrets)
+{
+    int32_t found = 0;
+    int32_t maxFound = 0;
+
+    if (G_HaveSplitScreen())
+    {
+        for (int32_t viewIndex = 0, playerCount = G_GetSplitScreenPlayerCount(); viewIndex < playerCount; ++viewIndex)
+        {
+            int32_t const playerNum = G_GetSplitScreenPlayer(viewIndex);
+            DukePlayer_t const * const pPlayer = ((unsigned)playerNum < MAXPLAYERS) ? g_player[playerNum].ps : nullptr;
+
+            if (pPlayer == nullptr)
+                continue;
+
+            found += pPlayer->secret_rooms;
+            maxFound = max<int32_t>(maxFound, pPlayer->max_secret_rooms);
+        }
+    }
+    else
+    {
+        DukePlayer_t const * const pPlayer = g_player[myconnectindex].ps;
+        if (pPlayer != nullptr)
+        {
+            found = pPlayer->secret_rooms;
+            maxFound = pPlayer->max_secret_rooms;
+        }
+    }
+
+    if (secrets != nullptr)
+        *secrets = found;
+    if (maxSecrets != nullptr)
+        *maxSecrets = maxFound;
+}
+
+static int32_t Menu_CanUseReplayLevels(void)
+{
+    auto const ps = g_player[myconnectindex].ps;
+    return ps != nullptr && (ps->gm & MODE_GAME) && !G_HaveUserMap() && !g_netServer && !g_netClient && ud.coop == 1;
+}
+
+static void Menu_UpdateCurrentReplayLevelProgress(void)
+{
+    if (!Menu_CanUseReplayLevels())
+        return;
+
+    int32_t secrets = 0, maxSecrets = 0;
+    Menu_GetCurrentCampaignSecrets(&secrets, &maxSecrets);
+    CONFIG_SetSplitScreenLevelProgress(g_addonNum, ud.volume_number, ud.level_number, secrets, maxSecrets, 0);
+}
+
+static int32_t Menu_IsReplayLevelCurrent(int32_t const entryIndex)
+{
+    return (unsigned)entryIndex < (unsigned)g_replayLevelCount
+        && g_replayLevelVolumes[entryIndex] == ud.volume_number
+        && g_replayLevelIndices[entryIndex] == ud.level_number;
+}
+
+static void Menu_UpdateReplayLevelActionEntry(void)
+{
+    if (g_replayLevelCount <= 0)
+    {
+        ME_REPLAY_LEVEL_GOTO.name = "Go To Level";
+        ME_REPLAY_LEVEL_GOTO.font = &MF_Redfont;
+        ME_REPLAY_LEVEL_GOTO.flags &= ~(MEF_Disabled | MEF_LookDisabled);
+        return;
+    }
+
+    int32_t const entryIndex = clamp<int32_t>(g_replayLevelSelectedIndex, 0, g_replayLevelCount - 1);
+    int32_t const isCurrentLevel = Menu_IsReplayLevelCurrent(entryIndex);
+
+    ME_REPLAY_LEVEL_GOTO.name = isCurrentLevel ? "Current Level" : "Go To Level";
+    ME_REPLAY_LEVEL_GOTO.font = isCurrentLevel ? &MF_RedfontBlue : &MF_Redfont;
+    ME_REPLAY_LEVEL_GOTO.flags &= ~(MEF_Disabled | MEF_LookDisabled);
+}
+
+static void Menu_PopulateReplayLevelMenu(void)
+{
+    Menu_UpdateCurrentReplayLevelProgress();
+
+    int32_t entryCount = 0;
+    int32_t selectedEntry = 0;
+
+    for (int32_t volumeIndex = 0; volumeIndex < g_volumeCnt && entryCount < ARRAY_SSIZE(g_replayLevelNames); ++volumeIndex)
+    {
+        for (int32_t levelIndex = 0; levelIndex < MAXLEVELS && entryCount < ARRAY_SSIZE(g_replayLevelNames); ++levelIndex)
+        {
+            auto const &mapInfo = g_mapInfo[volumeIndex * MAXLEVELS + levelIndex];
+            if (mapInfo.filename == nullptr || mapInfo.name == nullptr || mapInfo.name[0] == '\0')
+                continue;
+
+            int32_t played = 0, secrets = 0, maxSecrets = 0, bestTime = 0;
+            CONFIG_GetSplitScreenLevelProgress(g_addonNum, volumeIndex, levelIndex, &played, &secrets, &maxSecrets, &bestTime);
+            if (!played)
+                continue;
+
+            if (volumeIndex > ud.volume_number || (volumeIndex == ud.volume_number && levelIndex > ud.level_number))
+                continue;
+
+            Bsnprintf(g_replayLevelNames[entryCount], sizeof(g_replayLevelNames[entryCount]), "%s", localeLookup(mapInfo.name));
+
+            g_replayLevelVolumes[entryCount] = volumeIndex;
+            g_replayLevelIndices[entryCount] = levelIndex;
+            g_replayLevelSecrets[entryCount] = secrets;
+            g_replayLevelMaxSecrets[entryCount] = maxSecrets;
+            g_replayLevelBestTimes[entryCount] = bestTime;
+
+            if (volumeIndex == ud.volume_number && levelIndex == ud.level_number)
+                selectedEntry = entryCount;
+
+            ++entryCount;
+        }
+    }
+
+    if (entryCount <= 0)
+    {
+        int32_t const currentVolume = clamp<int32_t>(ud.volume_number, 0, max<int32_t>(g_volumeCnt - 1, 0));
+        int32_t const currentLevel = clamp<int32_t>(ud.level_number, 0, MAXLEVELS - 1);
+        auto const &mapInfo = g_mapInfo[currentVolume * MAXLEVELS + currentLevel];
+        int32_t secrets = 0, maxSecrets = 0;
+
+        Menu_GetCurrentCampaignSecrets(&secrets, &maxSecrets);
+
+        if (mapInfo.name != nullptr && mapInfo.name[0] != '\0')
+            Bsnprintf(g_replayLevelNames[0], sizeof(g_replayLevelNames[0]), "%s", localeLookup(mapInfo.name));
+        else
+            Bsnprintf(g_replayLevelNames[0], sizeof(g_replayLevelNames[0]), "Current Level");
+
+        g_replayLevelVolumes[0] = currentVolume;
+        g_replayLevelIndices[0] = currentLevel;
+        g_replayLevelSecrets[0] = secrets;
+        g_replayLevelMaxSecrets[0] = maxSecrets;
+        g_replayLevelBestTimes[0] = 0;
+        entryCount = 1;
+        selectedEntry = 0;
+    }
+
+    g_replayLevelCount = entryCount;
+    g_replayLevelSelectedIndex = clamp<int32_t>(selectedEntry, 0, entryCount - 1);
+    Menu_UpdateReplayLevelActionEntry();
+    M_LEVELREPLAY.numEntries = ARRAY_SSIZE(MEL_REPLAY_LEVEL);
+    M_LEVELREPLAY.currentEntry = 0;
+    Menu_AdjustForCurrentEntryAssignmentBlind(&M_LEVELREPLAY);
+}
+
+static void Menu_MoveReplayLevelSelection(int32_t const direction)
+{
+    if (g_replayLevelCount <= 1 || direction == 0)
+        return;
+
+    g_replayLevelSelectedIndex = (g_replayLevelSelectedIndex + direction + g_replayLevelCount) % g_replayLevelCount;
+    Menu_UpdateReplayLevelActionEntry();
+}
+
+static int32_t Menu_GetReplayLevelThumbnailTile(int32_t const entryIndex)
+{
+    if ((unsigned)entryIndex >= (unsigned)g_replayLevelCount)
+        return -1;
+
+    int32_t const levelIndex = g_replayLevelIndices[entryIndex];
+
+    switch (g_addonNum)
+    {
+    case ADDON_DUKEDC:
+        return 20080 + levelIndex;
+    case ADDON_NWINTER:
+        return 20100 + levelIndex;
+    case ADDON_CARIBBEAN:
+        return 20120 + levelIndex;
+    default:
+        return 20000 + (g_replayLevelVolumes[entryIndex] * 16) + levelIndex;
+    }
+}
+
+static void Menu_FormatReplayBestTime(char * const buffer, size_t const bufferSize, int32_t const bestTime)
+{
+    if (bestTime <= 0)
+    {
+        Bsnprintf(buffer, bufferSize, "Best time: --:--");
+        return;
+    }
+
+    Bsnprintf(buffer, bufferSize, "Best time: %d:%02d.%02d",
+              bestTime / (REALGAMETICSPERSEC * 60),
+              (bestTime / REALGAMETICSPERSEC) % 60,
+              ((bestTime % REALGAMETICSPERSEC) * 33) / 10);
+}
+
+static void Menu_DrawReplayLevelPanelBackground(vec2_t const origin)
+{
+    Menu_BlackRectangle(origin.x + (20<<16), origin.y + (74<<16), 280<<16, 80<<16, 1|32);
+}
+
+static int32_t xdim_from_320_16(int32_t x);
+static int32_t ydim_from_200_16(int32_t y);
+
+static void Menu_DrawReplayLevelArrow(int32_t const x, int32_t const y, int32_t const direction)
+{
+    int32_t const z = 49152;
+    int32_t const posx = tilesiz[SELECTDIR].y * z;
+    int32_t const clipWidth = max<int32_t>((posx>>17)<<16, 14<<16);
+    int32_t const clipLeft = x - (clipWidth>>1);
+    int32_t const x1 = xdim_from_320_16(clipLeft);
+    int32_t const y1 = ydim_from_200_16(y - (14<<16));
+    int32_t const x2 = xdim_from_320_16(clipLeft + clipWidth);
+    int32_t const y2 = ydim_from_200_16(y + (14<<16));
+    int32_t const angle = direction < 0 ? 512 : 1536;
+    int32_t const spriteX = direction < 0 ? clipLeft + posx : clipLeft + clipWidth - posx;
+
+    rotatesprite_(spriteX, y, z, angle, SELECTDIR, Menu_CursorShade(), 0, 2|8|16, 0, 0, x1, y1, x2, y2);
+}
+
+static void Menu_DrawReplayLevelDetails(vec2_t const origin)
+{
+    if (g_replayLevelCount <= 0)
+        return;
+
+    int32_t const entryIndex = clamp<int32_t>(g_replayLevelSelectedIndex, 0, g_replayLevelCount - 1);
+    int32_t const thumbX = 24;
+    int32_t const thumbY = 78;
+    int32_t const thumbW = 128;
+    int32_t const thumbH = 72;
+    int32_t const infoX = 166;
+    int32_t const infoY = 82;
+
+    Menu_DrawReplayLevelPanelBackground(origin);
+
+    G_ScreenText(MF_Redfont.tilenum, origin.x + (160<<16), origin.y + (50<<16), MF_Redfont.zoom, 0, 0,
+                 g_replayLevelNames[entryIndex], 0, MF_Redfont.pal_selected, g_textstat, 0,
+                 MF_Redfont.emptychar.x, MF_Redfont.emptychar.y, MF_Redfont.between.x, MF_Redfont.between.y,
+                 MF_Redfont.textflags | TEXT_XCENTER, 0, 0, xdim-1, ydim-1);
+
+    if (g_replayLevelCount > 1)
+    {
+        int32_t const leftX = origin.x + (34<<16);
+        int32_t const rightX = origin.x + (286<<16);
+        int32_t const arrowY = origin.y + (50<<16);
+        int32_t const rightArrowY = arrowY + (14<<16);
+
+        Menu_DrawReplayLevelArrow(leftX, arrowY, -1);
+        Menu_DrawReplayLevelArrow(rightX, rightArrowY, 1);
+
+#if !defined EDUKE32_TOUCH_DEVICES
+        if (MOUSEACTIVECONDITIONAL(!m_mousecaught && g_mouseClickState == MOUSE_RELEASED))
+        {
+            if (!Menu_MouseOutsideBounds(&m_mousepos, leftX - (14<<16), arrowY - (14<<16), 28<<16, 28<<16))
+            {
+                Menu_MoveReplayLevelSelection(-1);
+                m_mousecaught = 1;
+                S_PlaySound(KICK_HIT);
+            }
+            else if (!Menu_MouseOutsideBounds(&m_mousepos, rightX - (14<<16), rightArrowY - (14<<16), 28<<16, 28<<16))
+            {
+                Menu_MoveReplayLevelSelection(1);
+                m_mousecaught = 1;
+                S_PlaySound(KICK_HIT);
+            }
+        }
+#endif
+    }
+
+    int32_t const thumbnailTile = Menu_GetReplayLevelThumbnailTile(entryIndex);
+    if (thumbnailTile >= 0 && tilesiz[thumbnailTile].x > 0 && tilesiz[thumbnailTile].y > 0)
+    {
+        rotatesprite_fs(origin.x + ((thumbX + (thumbW>>1))<<16), origin.y + ((thumbY + (thumbH>>1))<<16),
+                        divscale16(thumbW, tilesiz[thumbnailTile].x), 0, thumbnailTile, 0, 0, 2|8);
+    }
+    else
+    {
+        creditsminitext(origin.x + ((thumbX + (thumbW>>1))<<16), origin.y + ((thumbY + 27)<<16), "LEVEL", 8);
+        creditsminitext(origin.x + ((thumbX + (thumbW>>1))<<16), origin.y + ((thumbY + 38)<<16), "THUMBNAIL", 8);
+    }
+
+    char tempbuf[128];
+    char const * const volumeName = g_volumeNames[g_replayLevelVolumes[entryIndex]];
+    Bsnprintf(tempbuf, sizeof(tempbuf), "Episode: %s",
+              volumeName != nullptr && volumeName[0] != '\0' ? localeLookup(volumeName) : "Unknown");
+    mminitext(origin.x + (infoX<<16), origin.y + (infoY<<16), tempbuf, 0);
+
+    Bsnprintf(tempbuf, sizeof(tempbuf), "Level %d", g_replayLevelIndices[entryIndex] + 1);
+    mminitext(origin.x + (infoX<<16), origin.y + ((infoY + 12)<<16), tempbuf, 0);
+
+    Bsnprintf(tempbuf, sizeof(tempbuf), "Secrets: %d/%d", g_replayLevelSecrets[entryIndex], g_replayLevelMaxSecrets[entryIndex]);
+    mminitext(origin.x + (infoX<<16), origin.y + ((infoY + 24)<<16), tempbuf, 0);
+
+    Menu_FormatReplayBestTime(tempbuf, sizeof(tempbuf), g_replayLevelBestTimes[entryIndex]);
+    mminitext(origin.x + (infoX<<16), origin.y + ((infoY + 36)<<16), tempbuf, 0);
+
+    if (!Menu_IsReplayLevelCurrent(entryIndex))
+    {
+        mminitext(origin.x + (infoX<<16), origin.y + ((infoY + 52)<<16), "Starting this level", 8);
+        mminitext(origin.x + (infoX<<16), origin.y + ((infoY + 62)<<16), "loses current progress", 8);
+    }
+}
+
 static int32_t Menu_FindFirstLevelWithFilename(char const * const needle, int32_t * const volume, int32_t * const level)
 {
     if (needle == nullptr || volume == nullptr || level == nullptr)
@@ -5050,6 +5995,26 @@ static void Menu_StartGameWithoutSkill(void)
         return;
 
     Menu_StartConfiguredGame(M_SKILL.currentEntry, PISTOL_BODYHIT);
+}
+
+static void Menu_StartReplayLevel(void)
+{
+    if (g_replayLevelCount <= 0)
+        return;
+
+    int32_t const entryIndex = clamp<int32_t>(g_replayLevelSelectedIndex, 0, g_replayLevelCount - 1);
+    if (Menu_IsReplayLevelCurrent(entryIndex))
+        return;
+
+    ud.m_volume_number = ud.volume_number = g_replayLevelVolumes[entryIndex];
+    ud.m_level_number = ud.level_number = g_replayLevelIndices[entryIndex];
+    ud.m_player_skill = max<int32_t>(ud.player_skill, 1);
+    ud.m_coop = ud.coop;
+    ud.m_ffire = ud.ffire;
+    ud.m_weaponsharing = ud.weaponsharing;
+
+    Menu_Change(MENU_CLOSE);
+    G_NewGame_EnterLevel();
 }
 
 static void Menu_DoCheat(int32_t cheatID)
@@ -5550,8 +6515,6 @@ static int32_t Menu_EntryOptionModify(MenuEntry_t *entry, int32_t newOption)
     }
     else if (entry == &ME_SOUND_DUKETALK)
         ud.config.VoiceToggle = (ud.config.VoiceToggle&~1) | newOption;
-    else if (entry == &ME_CONTROLS_SEPARATE_INPUT)
-        I_ClearAllInput();
     else if (entry == &ME_JOYSTICK_ENABLE)
         CONTROL_JoystickEnabled = (newOption && CONTROL_JoyPresent);
     else if (entry == &ME_JOYSTICK_CONTROLLER)
@@ -5671,6 +6634,52 @@ static void Menu_EntryOptionDidModify(MenuEntry_t *entry)
 #ifdef USE_OPENGL
     int domodechange = 0;
 #endif
+
+    auto getAssignInputPlayer = [](MenuEntry_t const * const assignEntry) -> int
+    {
+        if (assignEntry == &ME_ASSIGNINPUT_PLAYER1) return 0;
+        if (assignEntry == &ME_ASSIGNINPUT_PLAYER2) return 1;
+        if (assignEntry == &ME_ASSIGNINPUT_PLAYER3) return 2;
+        if (assignEntry == &ME_ASSIGNINPUT_PLAYER4) return 3;
+        return -1;
+    };
+
+    int const assignInputPlayer = getAssignInputPlayer(entry);
+    if (assignInputPlayer >= 0 || entry == &ME_ASSIGNINPUT_P1_KB_PAD)
+    {
+        if (ud.config.SplitScreenSeparateKeyboardMouse)
+        {
+            int32_t const player1GamepadIndex = G_GetSplitScreenInputGamepadIndex(G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[0]));
+            ud.config.SplitScreenPlayerInput[0] = (player1GamepadIndex >= 0)
+                ? SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 + player1GamepadIndex
+                : SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1;
+
+            for (int playerNum = 1; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
+            {
+                int32_t const input = G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum]);
+                if (input == SPLITSCREEN_INPUT_KEYBOARD_MOUSE)
+                    ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_NONE;
+                else if (input >= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 && input <= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4)
+                    ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_GAMEPAD1 + (input - SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1);
+            }
+        }
+        else
+        {
+            for (int playerNum = 0; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
+            {
+                int32_t const input = G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum]);
+                if (input >= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 && input <= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4)
+                    ud.config.SplitScreenPlayerInput[playerNum] = (playerNum == 0) ? SPLITSCREEN_INPUT_KEYBOARD_MOUSE : SPLITSCREEN_INPUT_NONE;
+            }
+        }
+
+        for (int playerNum = 0; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
+            ud.config.SplitScreenPlayerInput[playerNum] = G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum]);
+
+        Menu_PopulateAssignInputOptions();
+        CONFIG_WriteSetup(0);
+        return;
+    }
 
     if (entry == &ME_GAMESETUP_AIM_AUTO ||
         entry == &ME_GAMESETUP_WEAPSWITCH_PICKUP ||
@@ -6208,6 +7217,11 @@ static void Menu_Verify(int32_t input)
             Menu_SetKeyboardScanCode(s_savedKeyColumn, M_KEYBOARDKEYS.currentColumn, s_savedScanCode, input == 1);
         break;
 
+    case MENU_LEVELREPLAYVERIFY:
+        if (input)
+            Menu_StartReplayLevel();
+        break;
+
     case MENU_QUIT:
     case MENU_QUIT_INGAME:
         if (input)
@@ -6544,6 +7558,7 @@ void Menu_AnimateChange(int32_t cm, MenuAnimationType_t animtype)
         m_animation.start  = 0;
         m_animation.length = 0;
         Menu_Change(cm);
+        I_ClearAllInput();
         return;
     }
 
@@ -6589,6 +7604,8 @@ void Menu_AnimateChange(int32_t cm, MenuAnimationType_t animtype)
             Menu_Change(cm);
             break;
     }
+
+    I_ClearAllInput();
 }
 
 static void Menu_MaybeSetSelectionToChild(Menu_t * m, MenuID_t id)
@@ -6763,6 +7780,10 @@ static void Menu_AboutToStartDisplaying(Menu_t * m)
 
         break;
 
+    case MENU_LEVELREPLAY:
+        Menu_PopulateReplayLevelMenu();
+        break;
+
     case MENU_JOYSTICKSETUP:
         Menu_UpdateJoystickAimEntries();
         Menu_UpdateJoystickAdvancedEntries();
@@ -6872,6 +7893,10 @@ static void Menu_ChangingTo(Menu_t * m)
         ((MenuMenu_t *)m->object)->currentEntry = Menu_GetPendingSimpleGameMode();
         break;
 
+    case MENU_ASSIGNINPUT:
+        Menu_PopulateAssignInputOptions();
+        break;
+
     case MENU_PLAYERCOUNT:
     {
         MEO_PLAYERCOUNT_2.linkID = MENU_EPISODE;
@@ -6921,6 +7946,10 @@ static void Menu_ChangingTo(Menu_t * m)
         m->parentID = MENU_EPISODE;
         MEO_LEVEL.linkID = g_maxDefinedSkill == 0 ? MENU_NULL : MENU_SKILL;
         Menu_PopulateSimpleLevelMenu(g_simplePendingVolume >= 0 ? g_simplePendingVolume : M_EPISODE.currentEntry);
+        break;
+
+    case MENU_LEVELREPLAY:
+        Menu_PopulateReplayLevelMenu();
         break;
 
     case MENU_SKILL:
@@ -7131,13 +8160,6 @@ static inline int32_t Menu_UpdateScreenOK(MenuID_t cm)
     so if you want to change or add a menu,
     chances are you should scroll up.
 */
-
-int32_t m_mouselastactivity;
-#if !defined EDUKE32_TOUCH_DEVICES
-int32_t m_mousewake_watchpoint, m_menuchange_watchpoint;
-#endif
-int32_t m_mousecaught;
-static vec2_t m_prevmousepos, m_mousepos, m_mousedownpos;
 
 void Menu_Open(uint8_t playerID)
 {
@@ -7529,7 +8551,7 @@ static int32_t M_RunMenu_Menu(Menu_t *cm, MenuMenu_t *menu, MenuEntry_t *current
             if (entry->format->width < 0)
                 status |= MT_XRight;
 
-            if (dodraw && (status & MT_Selected) && state != 1)
+            if (dodraw && (status & MT_Selected) && state != 1 && (cm == nullptr || cm->menuID != MENU_LEVELREPLAY))
             {
                 if (status & MT_XCenter)
                 {
@@ -7610,9 +8632,15 @@ static int32_t M_RunMenu_Menu(Menu_t *cm, MenuMenu_t *menu, MenuEntry_t *current
                         int32_t optiontextx = origin.x + x;
                         const int32_t optiontexty = origin.y + y_upper + y - menu->scrollPos;
 
+                        uint8_t optionStatus = status;
+                        if ((entry == &ME_ASSIGNINPUT_PLAYER1 || entry == &ME_ASSIGNINPUT_PLAYER2 || entry == &ME_ASSIGNINPUT_PLAYER3 || entry == &ME_ASSIGNINPUT_PLAYER4)
+                            && currentOption >= 0 && currentOption < object->options->numOptions
+                            && Menu_IsAssignInputDisconnected(object->options->optionValues[currentOption]))
+                            optionStatus |= MT_Disabled;
+
                         const vec2_t optiontextsize = Menu_Text(optiontextx, optiontexty + ((height>>17)<<16), object->font,
                             currentOption < 0 ? MenuCustom : currentOption < object->options->numOptions ? object->options->optionNames[currentOption] : "",
-                            status, ydim_upper, ydim_lower);
+                            optionStatus, ydim_upper, ydim_lower);
 
                         if (!(status & MT_XRight))
                             mousewidth += optiontextsize.x;
@@ -8631,11 +9659,29 @@ static MenuEntry_t *Menu_RunInput_Menu_Movement(MenuMenu_t *menu, MenuMovement_t
 
 static void Menu_RunInput_EntryLink_Activate(MenuEntry_t *entry)
 {
+#ifdef _WIN32
+    if (entry == &ME_GAMESETUP_CHECKUPDATES)
+    {
+        Menu_StartSplitScreenUpdateCheck();
+        return;
+    }
+
+    if (entry == &ME_GAMESETUP_INSTALLUPDATE)
+    {
+        Menu_InstallSplitScreenUpdate();
+        return;
+    }
+#endif
+
+    if (entry == &ME_REPLAY_LEVEL_GOTO && Menu_IsReplayLevelCurrent(g_replayLevelSelectedIndex))
+        return;
+
     auto link = (MenuLink_t*)entry->entry;
 
     Menu_EntryLinkActivate(entry);
 
     Menu_AnimateChange(link->linkID, link->animation);
+    I_ClearAllInput();
 }
 
 static void Menu_RunInput_EntryOptionList_MovementVerify(MenuOption_t *object)
@@ -9083,15 +10129,18 @@ static void Menu_RunInput_FileSelect_Select(MenuFileSelect_t *object)
 
 static void Menu_RunInput(Menu_t *cm)
 {
+    I_BeginMenuInputFrame();
+
     switch (cm->type)
     {
         case Panel:
         {
             auto panel = (MenuPanel_t*)cm->object;
 
-            if (I_ReturnTrigger() || Menu_RunInput_MouseReturn())
+            if (I_ReturnTrigger() || I_EscapeTrigger() || Menu_RunInput_MouseReturn())
             {
                 I_ReturnTriggerClear();
+                I_EscapeTriggerClear();
                 m_mousecaught = 1;
 
                 S_PlaySound(EXITMENUSOUND);

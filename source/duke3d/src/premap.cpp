@@ -34,6 +34,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 static uint8_t precachehightile[2][bitmap_size(MAXTILES)];
 static int32_t g_precacheCount;
 
+int CONFIG_SetSplitScreenLevelProgress(int32_t addonNum, int32_t volumeNum, int32_t levelNum, int32_t secrets, int32_t maxSecrets, int32_t bestTime);
 
 static int32_t NET_75_CHECK = 0;
 
@@ -2036,6 +2037,9 @@ int G_EnterLevel(int gameMode)
 
 
     prelevel(gameMode);
+
+    if (!G_HaveUserMap())
+        CONFIG_SetSplitScreenLevelProgress(g_addonNum, ud.volume_number, ud.level_number, 0, p0.max_secret_rooms, 0);
 
     G_AlignWarpElevators();
     G_ResetLocalPerPlayerPickups();

@@ -41,6 +41,18 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #define MAXSPLITSCREENCONTROLLERS 4
 #define MAXSPLITSCREENCONTROLLERPROFILES (MAXSPLITSCREENCONTROLLERS - 1)
 
+#define SPLITSCREEN_INPUT_KEYBOARD_MOUSE 0
+#define SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 1
+#define SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD2 2
+#define SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD3 3
+#define SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4 4
+#define SPLITSCREEN_INPUT_GAMEPAD1 5
+#define SPLITSCREEN_INPUT_GAMEPAD2 6
+#define SPLITSCREEN_INPUT_GAMEPAD3 7
+#define SPLITSCREEN_INPUT_GAMEPAD4 8
+#define SPLITSCREEN_INPUT_NONE 9
+#define SPLITSCREEN_INPUT_COUNT 10
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -240,6 +252,7 @@ typedef struct {
         int32_t SplitScreenJoystickRumble[MAXSPLITSCREENCONTROLLERPROFILES];
         int32_t SplitScreenSeparateKeyboardMouse;
         int32_t SplitScreenHudStyle;
+        int32_t SplitScreenPlayerInput[MAXSPLITSCREENCONTROLLERS];
         int32_t SplitScreenPlayerAutoAim[MAXSPLITSCREENCONTROLLERS];
         int32_t SplitScreenPlayerAlwaysRun[MAXSPLITSCREENCONTROLLERS];
         int32_t SplitScreenPlayerWeaponSwitch[MAXSPLITSCREENCONTROLLERS];
@@ -677,6 +690,42 @@ EXTERN_INLINE void G_SetStatusBarScale(int32_t sc)
 static FORCE_INLINE int32_t G_GetSplitScreenPlayerConfigIndex(int32_t const playerNum)
 {
     return clamp<int32_t>(playerNum, 0, MAXSPLITSCREENCONTROLLERS - 1);
+}
+
+static FORCE_INLINE int32_t G_NormalizeSplitScreenInput(int32_t input)
+{
+    return clamp<int32_t>(input, SPLITSCREEN_INPUT_KEYBOARD_MOUSE, SPLITSCREEN_INPUT_NONE);
+}
+
+static FORCE_INLINE int32_t G_GetSplitScreenPlayerInput(int32_t const playerNum)
+{
+    return G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[G_GetSplitScreenPlayerConfigIndex(playerNum)]);
+}
+
+static FORCE_INLINE int32_t G_GetSplitScreenInputGamepadIndex(int32_t const input)
+{
+    if (input >= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 && input <= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4)
+        return input - SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1;
+
+    if (input >= SPLITSCREEN_INPUT_GAMEPAD1 && input <= SPLITSCREEN_INPUT_GAMEPAD4)
+        return input - SPLITSCREEN_INPUT_GAMEPAD1;
+
+    return -1;
+}
+
+static FORCE_INLINE int32_t G_SplitScreenInputHasKeyboardMouse(int32_t const input)
+{
+    return input == SPLITSCREEN_INPUT_KEYBOARD_MOUSE
+        || (input >= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 && input <= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4);
+}
+
+static FORCE_INLINE int32_t G_GetSplitScreenKeyboardMousePlayer(void)
+{
+    for (int32_t playerNum = 0; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
+        if (G_SplitScreenInputHasKeyboardMouse(G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum])))
+            return playerNum;
+
+    return -1;
 }
 
 static FORCE_INLINE int32_t G_GetLocalPlayerAutoAimSetting(int32_t const playerNum)

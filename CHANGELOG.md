@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5
+
+- Adds a replayable Levels menu with per-level thumbnails and progress details.
+- Adds configurable input assignment, including optional Player 1 keyboard/mouse plus gamepad.
+- Improves in-game menu input, updater flow, HUD polish, and split-screen controls.
+- Other bug fixes and improvements.
+
 ## v0.4
 
 - Adds Extra Content support for Duke Caribbean, Duke It Out in D.C., and Nuclear Winter, with automatic relaunch into the selected content.

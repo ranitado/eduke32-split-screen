@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #define input_h_
 
 extern int32_t I_CheckAllInput(void);
+extern void I_BeginMenuInputFrame(void);
 extern void I_ClearAllInput(void);
 extern void I_ClearLast(void);
 
@@ -47,11 +48,15 @@ extern int32_t I_MenuUp(void);
 extern int32_t I_MenuDown(void);
 extern int32_t I_MenuLeft(void);
 extern int32_t I_MenuRight(void);
+extern int32_t I_MenuTabLeft(void);
+extern int32_t I_MenuTabRight(void);
 
-#define I_MenuUpClear    I_ClearLast
-#define I_MenuDownClear  I_ClearLast
-#define I_MenuLeftClear  I_ClearLast
-#define I_MenuRightClear I_ClearLast
+extern void I_MenuUpClear(void);
+extern void I_MenuDownClear(void);
+extern void I_MenuLeftClear(void);
+extern void I_MenuRightClear(void);
+#define I_MenuTabLeftClear  I_ClearLast
+#define I_MenuTabRightClear I_ClearLast
 
 extern int32_t I_PanelUp(void);
 extern int32_t I_PanelDown(void);
@@ -87,7 +92,7 @@ static FORCE_INLINE void I_AddForceFeedback(int const lo, int const hi, int cons
         return;
 
 #ifdef SPLITSCREEN_MOD_HACKS
-    if (ud.config.SplitScreenSeparateKeyboardMouse)
+    if (G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(myconnectindex)) != 0)
         return;
 #endif
 

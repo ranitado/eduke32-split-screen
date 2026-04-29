@@ -42,6 +42,8 @@ char const *CONFIG_GetControllerViewCenteringName(int32_t viewCentering);
 
 int32_t CONFIG_GetMapBestTime(char const *mapname, uint8_t const *mapmd4);
 int     CONFIG_SetMapBestTime(uint8_t const *mapmd4, int32_t tm);
+int32_t CONFIG_GetSplitScreenLevelProgress(int32_t addonNum, int32_t volumeNum, int32_t levelNum, int32_t *played, int32_t *secrets, int32_t *maxSecrets, int32_t *bestTime);
+int     CONFIG_SetSplitScreenLevelProgress(int32_t addonNum, int32_t volumeNum, int32_t levelNum, int32_t secrets, int32_t maxSecrets, int32_t bestTime);
 
 int32_t CONFIG_FunctionNameToNum(const char *func);
 

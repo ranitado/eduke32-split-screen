@@ -53,6 +53,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "vfs.h"
 
+int CONFIG_SetSplitScreenLevelProgress(int32_t addonNum, int32_t volumeNum, int32_t levelNum, int32_t secrets, int32_t maxSecrets, int32_t bestTime);
+
 // Uncomment to prevent anything except mirrors from drawing. It is sensible to
 // also uncomment ENGINE_CLEAR_SCREEN in build/src/engine_priv.h.
 //#define DEBUG_MIRRORS_ONLY
@@ -66,6 +68,16 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #endif
 
 #ifdef SPLITSCREEN_MOD_HACKS
+# if defined _WIN32
+static void G_AddSplitScreenAssetSearchPath(char const * const appdir, char const * const subdir)
+{
+    char path[BMAX_PATH];
+    Bsnprintf(path, ARRAY_SIZE(path), "%s/%s", appdir, subdir);
+    Bcorrectfilename(path, 0);
+    addsearchpath(path);
+}
+# endif
+
 static void G_LoadSplitScreenAssetDefinitions(void)
 {
     static char const * const assetDefs[] =
@@ -73,6 +85,7 @@ static void G_LoadSplitScreenAssetDefinitions(void)
         "splitscreen_logo.def",
         "splitscreen_rpg.def",
         "splitscreen_hud.def",
+        "splitscreen_levelthumbs.def",
     };
 
     int const bakpathsearchmode = pathsearchmode;
@@ -81,7 +94,11 @@ static void G_LoadSplitScreenAssetDefinitions(void)
 # if defined _WIN32
     char *appdir = Bgetappdir();
     if (appdir)
+    {
         addsearchpath(appdir);
+        G_AddSplitScreenAssetSearchPath(appdir, "levelthumbs");
+        G_AddSplitScreenAssetSearchPath(appdir, "custom/hud");
+    }
 # endif
 
     for (char const * const def : assetDefs)
@@ -6745,6 +6762,31 @@ static int G_EndOfLevel(void)
         if (p.player_par > 0 && (p.player_par < ud.playerbest || ud.playerbest < 0) && ud.display_bonus_screen == 1)
             CONFIG_SetMapBestTime(g_loadedMapHack.md4, p.player_par);
 
+        if (!G_HaveUserMap())
+        {
+            int32_t secretRooms = p.secret_rooms;
+            int32_t maxSecretRooms = p.max_secret_rooms;
+
+            if (G_HaveSplitScreen())
+            {
+                secretRooms = 0;
+
+                for (int32_t viewIndex = 0, playerCount = G_GetSplitScreenPlayerCount(); viewIndex < playerCount; ++viewIndex)
+                {
+                    int32_t const playerNum = G_GetSplitScreenPlayer(viewIndex);
+                    DukePlayer_t const * const pPlayer = ((unsigned)playerNum < MAXPLAYERS) ? g_player[playerNum].ps : nullptr;
+
+                    if (pPlayer == nullptr)
+                        continue;
+
+                    secretRooms += pPlayer->secret_rooms;
+                    maxSecretRooms = max<int32_t>(maxSecretRooms, pPlayer->max_secret_rooms);
+                }
+            }
+
+            CONFIG_SetSplitScreenLevelProgress(g_addonNum, ud.volume_number, ud.level_number, secretRooms, maxSecretRooms, p.player_par);
+        }
+
         if ((VM_OnEventWithReturn(EVENT_ENDLEVELSCREEN, p.i, myconnectindex, 0)) == 0 && ud.display_bonus_screen == 1)
         {
             int const ssize = ud.screen_size;
@@ -6884,6 +6926,37 @@ static void G_MergePrimarySplitScreenGamepadInput(input_t const &gamepadInput)
     localInput.q16horz = fix16_clamp(Blrintf(F16(128) * tanf(horizAngle * (fPI / 512.f))), F16(-256), F16(256));
 }
 
+static int32_t G_GetKeyboardMouseInputPlayer(void)
+{
+    int32_t const playerNum = G_GetSplitScreenKeyboardMousePlayer();
+    if ((unsigned)playerNum < MAXPLAYERS && G_IsSplitScreenPlayerActive(playerNum) && g_player[playerNum].ps != nullptr)
+        return playerNum;
+
+    return -1;
+}
+
+static void G_WriteInputForPlayer(int32_t const playerNum, input_t const &sourceInput)
+{
+    auto const pPlayer = g_player[playerNum].ps;
+    if (pPlayer == nullptr)
+        return;
+
+    auto const q16ang = fix16_to_int(pPlayer->q16ang);
+    auto &input = inputfifo[0][playerNum];
+
+    input = sourceInput;
+    input.fvel = mulscale9(sourceInput.fvel, sintable[(q16ang + 2560) & 2047]) +
+        mulscale9(sourceInput.svel, sintable[(q16ang + 2048) & 2047]);
+    input.svel = mulscale9(sourceInput.fvel, sintable[(q16ang + 2048) & 2047]) +
+        mulscale9(sourceInput.svel, sintable[(q16ang + 1536) & 2047]);
+
+    if (!FURY)
+    {
+        input.fvel += pPlayer->fric.x;
+        input.svel += pPlayer->fric.y;
+    }
+}
+
 void drawframe_do(void)
 {
     MICROPROFILE_SCOPEI("Game", EDUKE32_FUNCTION, MP_YELLOWGREEN);
@@ -6897,16 +6970,13 @@ void drawframe_do(void)
 
         G_HandleLocalKeys();
         OSD_DispatchQueued();
-        P_GetInput(myconnectindex);
-        G_UpdateSplitScreenLocalInputs();
+        int32_t const keyboardMouseInputPlayer = G_GetKeyboardMouseInputPlayer();
+        if (keyboardMouseInputPlayer >= 0)
+            P_GetInput(keyboardMouseInputPlayer);
+        else
+            localInput = {};
 
-        auto const pPlayer = g_player[myconnectindex].ps;
-        if (pPlayer != nullptr && (pPlayer->gm & (MODE_MENU | MODE_TYPE)) == 0)
-        {
-            input_t mappedInput {};
-            if (G_CopySplitScreenLocalInput(myconnectindex, &mappedInput) == 0)
-                G_MergePrimarySplitScreenGamepadInput(mappedInput);
-        }
+        G_UpdateSplitScreenLocalInputs();
     }
     else
     {
@@ -6953,21 +7023,17 @@ void drawframe_do(void)
 void dukeFillInputForTic(void)
 {
     // this is where we fill the input_t struct that is actually processed by P_ProcessInput()
-    auto const pPlayer = g_player[myconnectindex].ps;
-    auto const q16ang  = fix16_to_int(pPlayer->q16ang);
-    auto& input   = inputfifo[0][myconnectindex];
-
-    input = localInput;
-    input.fvel = mulscale9(localInput.fvel, sintable[(q16ang + 2560) & 2047]) +
-        mulscale9(localInput.svel, sintable[(q16ang + 2048) & 2047]);
-    input.svel = mulscale9(localInput.fvel, sintable[(q16ang + 2048) & 2047]) +
-        mulscale9(localInput.svel, sintable[(q16ang + 1536) & 2047]);
-
-    if (!FURY)
+    int32_t const playerCount = min<int32_t>(G_GetSplitScreenPlayerCount(), MAXSPLITSCREENCONTROLLERS);
+    for (int32_t viewIndex = 0; viewIndex < playerCount; ++viewIndex)
     {
-        input.fvel += pPlayer->fric.x;
-        input.svel += pPlayer->fric.y;
+        int32_t const playerNum = G_GetSplitScreenPlayer(viewIndex);
+        if ((unsigned)playerNum < MAXPLAYERS)
+            G_WriteInputForPlayer(playerNum, {});
     }
+
+    int32_t const keyboardMouseInputPlayer = G_GetKeyboardMouseInputPlayer();
+    if (keyboardMouseInputPlayer >= 0)
+        G_WriteInputForPlayer(keyboardMouseInputPlayer, localInput);
 
     G_FillSplitScreenInputsForTic();
 
@@ -7563,8 +7629,8 @@ MAIN_LOOP_RESTART:
     {
         if (gameHandleEvents() && quitevent)
         {
-            KB_KeyDown[sc_Escape] = 1;
-            quitevent = 0;
+            g_quickExit = 1;
+            G_GameExit();
         }
 
         //if (g_restartFrameRoutine)

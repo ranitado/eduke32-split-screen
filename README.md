@@ -23,7 +23,7 @@ https://voidpoint.io/terminx/eduke32
 - Windows x64.
 - A legal copy of Duke Nukem 3D.
 - The original game data file, usually named `DUKE3D.GRP`.
-- One gamepad per split-screen player, unless keyboard/mouse is used for player 1.
+- One gamepad per split-screen player, unless keyboard/mouse is assigned to one player.
 
 This repository and its releases do **not** include `DUKE3D.GRP` or any commercial Duke Nukem 3D game data.
 
@@ -31,7 +31,7 @@ Optional Extra Content packs also require the user to provide their own legal ad
 
 ## Installing the Windows Release
 
-1. Download `eduke32-split-screen-v0.4-windows-x64.zip` from the GitHub release.
+1. Download `eduke32-split-screen-v0.5-windows-x64.zip` from the GitHub release.
 2. Extract it to a new folder.
 3. Copy your legal `DUKE3D.GRP` into that same folder.
 4. Run `eduke32-split-screen.exe`.
@@ -63,7 +63,7 @@ Controls can be changed from the in-game menus. Player 1 settings are available 
 ## Split-Screen Notes
 
 - Cooperative and DukeMatch are intended for local split-screen.
-- The `Separate KB/M pads` option makes keyboard/mouse player 1 and gamepads control the remaining players.
+- Use `Assign Input` to choose which player receives keyboard/mouse or each gamepad. Player 1 can optionally use keyboard/mouse plus a gamepad.
 - Savegames show the player count and support split-screen cooperative sessions.
 
 ## Legal

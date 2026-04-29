@@ -37,6 +37,9 @@ custom/hud/rpggunwide.png
 
 apps/
 *.exe
+/eduke32-split-screen-test.exe
+/eduke32-split-screen-new.exe
+/CODEX_RULES.md
 /*.dll
 *.dylib
 *.so

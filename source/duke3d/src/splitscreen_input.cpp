@@ -47,8 +47,8 @@ constexpr int RUNKEYMOVE        = NORMALKEYMOVE << 1;
 constexpr float TURN_RATE       = 28.f;
 constexpr float VERTICAL_AIM_FEEL_SCALE = 1.2f;
 constexpr float LOOK_RATE       = TURN_RATE * 0.25f * VERTICAL_AIM_FEEL_SCALE;
-constexpr float PRECISION_AIM_SENS_X = 1.f;
-constexpr float PRECISION_AIM_SENS_Y = 1.f;
+constexpr float PRECISION_AIM_SENS_X = .8f;
+constexpr float PRECISION_AIM_SENS_Y = .8f;
 constexpr float AIM_REFERENCE_FPS = 60.f;
 constexpr int MAX_LOCAL_PLAYERS = 4;
 constexpr uint8_t WEAPON_REPEAT_INITIAL_DELAY = 12;
@@ -123,22 +123,21 @@ static void G_PlaySplitScreenMenuSound(int const sound)
 
 static bool G_HasNativeSplitScreenGamepads(void)
 {
-    return G_HaveSplitScreen();
-}
-
-static int G_GetFirstGamepadViewIndex(void)
-{
-    return ud.config.SplitScreenSeparateKeyboardMouse ? 1 : 0;
+    return G_HaveSplitScreen() || G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(myconnectindex)) >= 0;
 }
 
 static int G_GetGamepadIndexForPlayer(int const playerNum)
 {
-    return ud.config.SplitScreenSeparateKeyboardMouse ? playerNum - 1 : playerNum;
+    return G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(playerNum));
 }
 
 static int G_GetPlayerForGamepadIndex(int const gamepadIndex)
 {
-    return ud.config.SplitScreenSeparateKeyboardMouse ? gamepadIndex + 1 : gamepadIndex;
+    for (int playerNum = 0; playerNum < MAX_LOCAL_PLAYERS; ++playerNum)
+        if (G_GetGamepadIndexForPlayer(playerNum) == gamepadIndex)
+            return playerNum;
+
+    return -1;
 }
 
 static bool G_GamepadButtonHeld(uint32_t const buttons, int const button)
@@ -160,12 +159,11 @@ static int G_GetSplitScreenContinueViewCount(void)
 static void G_ClearSplitScreenContinueInputLocal(void)
 {
     int const viewCount = G_GetSplitScreenContinueViewCount();
-    int const firstGamepadViewIndex = G_GetFirstGamepadViewIndex();
 
     for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_PLAYERS; ++gamepadIndex)
         g_splitScreenContinuePrevButtons[gamepadIndex] = 0;
 
-    for (int viewIndex = firstGamepadViewIndex; viewIndex < viewCount; ++viewIndex)
+    for (int viewIndex = 0; viewIndex < viewCount; ++viewIndex)
     {
         int const playerNum = G_GetSplitScreenPlayer(viewIndex);
         int const gamepadIndex = G_GetGamepadIndexForPlayer(playerNum);
@@ -180,10 +178,9 @@ static void G_ClearSplitScreenContinueInputLocal(void)
 static int32_t G_CheckSplitScreenContinueInputLocal(void)
 {
     int const viewCount = G_GetSplitScreenContinueViewCount();
-    int const firstGamepadViewIndex = G_GetFirstGamepadViewIndex();
     int32_t pressed = 0;
 
-    for (int viewIndex = firstGamepadViewIndex; viewIndex < viewCount; ++viewIndex)
+    for (int viewIndex = 0; viewIndex < viewCount; ++viewIndex)
     {
         int const playerNum = G_GetSplitScreenPlayer(viewIndex);
         int const gamepadIndex = G_GetGamepadIndexForPlayer(playerNum);
@@ -1299,6 +1296,19 @@ static bool G_CanJoinCurrentGame(void)
     return ud.m_coop == 1 || !G_HaveSplitScreen();
 }
 
+static int G_GetJoinPlayerForGamepadIndex(int const gamepadIndex)
+{
+    int const assignedPlayer = G_GetPlayerForGamepadIndex(gamepadIndex);
+    if (assignedPlayer >= 0)
+        return assignedPlayer;
+
+    for (int playerNum = 1; playerNum < MAX_LOCAL_PLAYERS; ++playerNum)
+        if (!G_IsSplitScreenPlayerActive(playerNum))
+            return playerNum;
+
+    return -1;
+}
+
 static void G_UpdateSplitScreenJoinInputs(void)
 {
     bool const canJoin = G_CanJoinCurrentGame();
@@ -1311,11 +1321,18 @@ static void G_UpdateSplitScreenJoinInputs(void)
             ? state.buttons
             : 0;
 
-        int const playerNum = G_GetPlayerForGamepadIndex(gamepadIndex);
         bool const startPressed = G_GamepadButtonPressed(buttons, g_splitScreenJoinPrevButtons[gamepadIndex], GP_START);
+        int const assignedPlayer = G_GetPlayerForGamepadIndex(gamepadIndex);
+        int const playerNum = startPressed ? G_GetJoinPlayerForGamepadIndex(gamepadIndex) : assignedPlayer;
 
-        if (canJoin && startPressed && (unsigned)playerNum < MAX_LOCAL_PLAYERS && !G_IsSplitScreenPlayerActive(playerNum))
+        if (canJoin && startPressed && playerNum >= 0 && (unsigned)playerNum < MAX_LOCAL_PLAYERS && !G_IsSplitScreenPlayerActive(playerNum))
         {
+            if (assignedPlayer < 0)
+            {
+                ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
+                CONFIG_WriteSetup(0);
+            }
+
             if (G_AddSplitScreenPlayer(playerNum) >= 0)
             {
                 G_CloseSplitScreenConfigMenu(playerNum);
@@ -1328,7 +1345,8 @@ static void G_UpdateSplitScreenJoinInputs(void)
         g_splitScreenJoinPrevButtons[gamepadIndex] = buttons;
     }
 }
-}
+
+} // namespace
 
 void G_ClearSplitScreenContinueInput(void)
 {
@@ -1381,23 +1399,24 @@ void G_UpdateSplitScreenLocalInputs(void)
         g_splitScreenLocalInputs[playerNum] = {};
 
     int const playerCount = min<int32_t>(G_GetSplitScreenPlayerCount(), MAX_LOCAL_PLAYERS);
-    int const firstGamepadViewIndex = G_GetFirstGamepadViewIndex();
-    if (firstGamepadViewIndex > 0)
-        G_ClearSplitScreenPadInput(myconnectindex);
 
     auto const primaryPlayer = g_player[myconnectindex].ps;
     if (primaryPlayer != nullptr && (primaryPlayer->gm & (MODE_MENU | MODE_TYPE)) != 0)
     {
         G_CloseAllSplitScreenConfigMenus();
 
-        for (int viewIndex = firstGamepadViewIndex; viewIndex < playerCount; ++viewIndex)
+        for (int viewIndex = 0; viewIndex < playerCount; ++viewIndex)
         {
             int const playerNum = G_GetSplitScreenPlayer(viewIndex);
             if ((unsigned)playerNum >= MAXPLAYERS)
                 continue;
 
+            if (G_GetSplitScreenPlayerInput(playerNum) == SPLITSCREEN_INPUT_KEYBOARD_MOUSE)
+                continue;
+
             gamepadstate_t state {};
-            if (joyGetGamepadState(G_GetGamepadIndexForPlayer(playerNum), &state) == 0)
+            int const gamepadIndex = G_GetGamepadIndexForPlayer(playerNum);
+            if ((unsigned)gamepadIndex < MAX_LOCAL_PLAYERS && joyGetGamepadState(gamepadIndex, &state) == 0)
                 G_FreezeSplitScreenPadInput(playerNum, state);
             else
                 G_ClearSplitScreenPadInput(playerNum);
@@ -1410,15 +1429,22 @@ void G_UpdateSplitScreenLocalInputs(void)
         return;
     }
 
-    for (int viewIndex = firstGamepadViewIndex; viewIndex < playerCount; ++viewIndex)
+    for (int viewIndex = 0; viewIndex < playerCount; ++viewIndex)
     {
         int const playerNum = G_GetSplitScreenPlayer(viewIndex);
         if ((unsigned)playerNum >= MAXPLAYERS)
             continue;
 
+        int32_t const playerInput = G_GetSplitScreenPlayerInput(playerNum);
+        if (playerInput == SPLITSCREEN_INPUT_KEYBOARD_MOUSE)
+        {
+            G_ClearSplitScreenPadInput(playerNum);
+            continue;
+        }
+
         int const gamepadIndex = G_GetGamepadIndexForPlayer(playerNum);
         gamepadstate_t state {};
-        if (joyGetGamepadState(gamepadIndex, &state) == 0)
+        if ((unsigned)gamepadIndex < MAX_LOCAL_PLAYERS && joyGetGamepadState(gamepadIndex, &state) == 0)
             G_BuildSplitScreenPadInput(playerNum, G_GetControllerProfileForPlayer(playerNum), state);
         else
             G_ClearSplitScreenPadInput(playerNum);
@@ -1441,10 +1467,14 @@ void G_FillSplitScreenInputsForTic(void)
 
     int const playerCount = min<int32_t>(G_GetSplitScreenPlayerCount(), MAX_LOCAL_PLAYERS);
 
-    for (int viewIndex = 1; viewIndex < playerCount; ++viewIndex)
+    for (int viewIndex = 0; viewIndex < playerCount; ++viewIndex)
     {
         int const playerNum = G_GetSplitScreenPlayer(viewIndex);
         if ((unsigned)playerNum >= MAXPLAYERS || g_player[playerNum].ps == nullptr)
+            continue;
+
+        int32_t const playerInput = G_GetSplitScreenPlayerInput(playerNum);
+        if (playerInput == SPLITSCREEN_INPUT_KEYBOARD_MOUSE)
             continue;
 
         auto const &localPlayerInput = g_splitScreenLocalInputs[playerNum];
@@ -1452,16 +1482,30 @@ void G_FillSplitScreenInputsForTic(void)
         auto const *pPlayer          = g_player[playerNum].ps;
         auto const q16ang            = fix16_to_int(pPlayer->q16ang);
 
-        input = localPlayerInput;
-        input.fvel = mulscale9(localPlayerInput.fvel, sintable[(q16ang + 2560) & 2047]) +
+        input_t transformedInput = localPlayerInput;
+        transformedInput.fvel = mulscale9(localPlayerInput.fvel, sintable[(q16ang + 2560) & 2047]) +
             mulscale9(localPlayerInput.svel, sintable[(q16ang + 2048) & 2047]);
-        input.svel = mulscale9(localPlayerInput.fvel, sintable[(q16ang + 2048) & 2047]) +
+        transformedInput.svel = mulscale9(localPlayerInput.fvel, sintable[(q16ang + 2048) & 2047]) +
             mulscale9(localPlayerInput.svel, sintable[(q16ang + 1536) & 2047]);
 
         if (!FURY)
         {
-            input.fvel += pPlayer->fric.x;
-            input.svel += pPlayer->fric.y;
+            transformedInput.fvel += pPlayer->fric.x;
+            transformedInput.svel += pPlayer->fric.y;
+        }
+
+        if (G_SplitScreenInputHasKeyboardMouse(playerInput))
+        {
+            input.bits |= transformedInput.bits;
+            input.extbits |= transformedInput.extbits;
+            input.fvel += transformedInput.fvel;
+            input.svel += transformedInput.svel;
+            input.q16avel = fix16_sadd(input.q16avel, transformedInput.q16avel);
+            input.q16horz = fix16_sadd(input.q16horz, transformedInput.q16horz);
+        }
+        else
+        {
+            input = transformedInput;
         }
     }
 }

@@ -65,15 +65,7 @@ static FORCE_INLINE bool G_ShouldPlayPlayerActionSound(int32_t const playerNum)
 
 static int32_t G_GetSplitScreenGamepadIndexForPlayer(int32_t const playerNum)
 {
-    if (!G_HaveSplitScreen())
-        return 0;
-
-    int const playerCount = min<int32_t>(G_GetSplitScreenPlayerCount(), MAXSPLITSCREENCONTROLLERS);
-    for (int viewIndex = 0; viewIndex < playerCount; ++viewIndex)
-        if (G_GetSplitScreenPlayer(viewIndex) == playerNum)
-            return ud.config.SplitScreenSeparateKeyboardMouse ? viewIndex - 1 : viewIndex;
-
-    return clamp<int32_t>(playerNum, 0, max<int32_t>(playerCount - 1, 0));
+    return G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(playerNum));
 }
 
 static int32_t G_GetSplitScreenControllerProfileForPlayer(int32_t const playerNum)
@@ -137,7 +129,7 @@ static float G_GetJoystickAnalogSensitivityForPlayer(int32_t const playerNum, in
 
 static int32_t G_ApplyPrecisionAimScale(int32_t const value, float const configuredSensitivity)
 {
-    constexpr float precisionSensitivity = 1.f;
+    constexpr float precisionSensitivity = .8f;
 
     if (!value || configuredSensitivity <= precisionSensitivity)
         return value;
@@ -3402,7 +3394,7 @@ void P_GetInput(int const playerNum)
     auto      &thisPlayer = g_player[playerNum];
     auto const pPlayer    = thisPlayer.ps;
     ControlInfo info;
-    bool const suppressJoystickForSplitScreen = G_HaveSplitScreen() || ud.config.SplitScreenSeparateKeyboardMouse;
+    bool const suppressJoystickForSplitScreen = playerNum == myconnectindex || G_HaveSplitScreen();
 
     if (g_cheatBufLen > 1 || (pPlayer->gm & (MODE_MENU|MODE_TYPE)) || (ud.pause_on && !KB_KeyPressed(sc_Pause)))
     {
