@@ -75,7 +75,7 @@ static void Menu_CommitPendingSimpleGameState(void);
 static void Menu_PopulateSimpleLevelMenu(int32_t volumeIndex);
 static void Menu_PopulateReplayLevelMenu(void);
 static void Menu_DrawReplayLevelDetails(vec2_t const origin);
-static void Menu_MoveReplayLevelSelection(int32_t direction);
+static int32_t Menu_MoveReplayLevelSelection(int32_t direction);
 static int32_t Menu_CanUseReplayLevels(void);
 static void Menu_SelectFirstEpisodeOfCurrentContent(void);
 static int32_t Menu_GetSkillSound(int32_t skillIndex);
@@ -83,6 +83,8 @@ static void Menu_RefreshSkillMenuNames(void);
 static void Menu_StartConfiguredGame(int32_t skillIndex, int32_t skillSound);
 static void Menu_StartGameWithoutSkill(void);
 static void Menu_StartReplayLevel(void);
+static void Menu_GetCurrentCampaignSecrets(int32_t *secrets, int32_t *maxSecrets);
+static void Menu_GetCurrentCampaignTotalSecrets(int32_t *secrets);
 #ifdef _WIN32
 static void Menu_StartSplitScreenUpdateCheck(void);
 static void Menu_InstallSplitScreenUpdate(void);
@@ -2224,6 +2226,9 @@ static HANDLE g_updateCheckProcess = nullptr;
 static char g_updateCheckScriptPath[BMAX_PATH] = "";
 static char g_updateCheckResultPath[BMAX_PATH] = "";
 static int32_t g_updateInstallAvailable = 0;
+static HANDLE g_updateDownloadThread = nullptr;
+static LONG g_updateDownloadResult = 0;
+static char g_updateDownloadZipPath[BMAX_PATH] = "";
 
 enum SplitScreenUpdateInstallMode_t
 {
@@ -2564,6 +2569,21 @@ static int32_t Menu_DownloadUpdatePackage(char const * const url, char const * c
     return Menu_DownloadFileWinInet(url, destination) || Menu_DownloadFileUrlMon(url, destination);
 }
 
+struct splitScreenUpdateDownloadParams_t
+{
+    char url[1024];
+    char destination[BMAX_PATH];
+};
+
+static DWORD WINAPI Menu_DownloadSplitScreenUpdateThread(void * const data)
+{
+    splitScreenUpdateDownloadParams_t * const params = (splitScreenUpdateDownloadParams_t *)data;
+    int32_t const ok = params != nullptr && Menu_DownloadUpdatePackage(params->url, params->destination);
+    delete params;
+    InterlockedExchange(&g_updateDownloadResult, ok ? 1 : -1);
+    return 0;
+}
+
 static void Menu_WindowsCommandLineQuote(char * const out, size_t const outSize, char const * const in)
 {
     size_t pos = 0;
@@ -2627,7 +2647,7 @@ static int32_t Menu_ShouldSkipUpdateEntry(char const * const rel)
         return 1;
 
     return Menu_UpdatePathHasSuffix(rel, ".grp") || Menu_UpdatePathHasSuffix(rel, ".cfg") ||
-           Menu_UpdatePathHasSuffix(rel, ".esv") || Menu_UpdatePathHasSuffix(rel, ".esv.addon") ||
+           Menu_UpdatePathHasSuffix(rel, ".esv") || Menu_UpdatePathHasSuffix(rel, ".esv.addon") || Menu_UpdatePathHasSuffix(rel, ".esv.details") ||
            Menu_UpdatePathHasSuffix(rel, ".sav") || Menu_UpdatePathHasSuffix(rel, ".log");
 }
 
@@ -2720,6 +2740,8 @@ static void Menu_AttachUpdaterConsole(void)
     freopen_s(&dummy, "CONOUT$", "w", stdout);
     freopen_s(&dummy, "CONOUT$", "w", stderr);
     freopen_s(&dummy, "CONIN$", "r", stdin);
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    setvbuf(stderr, nullptr, _IONBF, 0);
     SetConsoleTitleA("Duke Split Screen Updater");
 }
 
@@ -2751,7 +2773,7 @@ int32_t Menu_RunSplitScreenUpdaterMode(int argc, char const* const* argv)
     DWORD const pidToWait = (DWORD)Bstrtoul(argv[2], nullptr, 10);
     char const * const rootPath = argv[3];
     char const * const exePath = argv[4];
-    char const * const downloadUrl = argv[5];
+    char const * const zipPath = argv[5];
     char const * const version = argv[6];
 
     Menu_AttachUpdaterConsole();
@@ -2769,25 +2791,17 @@ int32_t Menu_RunSplitScreenUpdaterMode(int argc, char const* const* argv)
     }
     Sleep(500);
 
-    char tempPath[BMAX_PATH];
-    if (!GetTempPathA(ARRAY_SIZE(tempPath), tempPath))
+    printf("[2/4] Checking downloaded package...\n");
+    FILE * const zipFile = fopen(zipPath, "rb");
+    if (zipFile == nullptr)
         goto fail;
+    fclose(zipFile);
 
-    char zipPath[BMAX_PATH];
-    Bsnprintf(zipPath, sizeof(zipPath), "%seduke32-split-screen-update.zip", tempPath);
-
-    printf("[2/5] Preparing temporary files...\n");
-    remove(zipPath);
-
-    printf("[3/5] Downloading update package...\n");
-    if (!Menu_DownloadUpdatePackage(downloadUrl, zipPath))
-        goto fail;
-
-    printf("[4/5] Installing files...\n");
+    printf("[3/4] Installing files...\n");
     if (!Menu_ExtractUpdateZip(zipPath, rootPath))
         goto fail;
 
-    printf("[5/5] Restarting Duke Split Screen...\n");
+    printf("[4/4] Restarting Duke Split Screen...\n");
     remove(zipPath);
 
     if (!Menu_StartUpdatedGame(exePath, rootPath))
@@ -2953,7 +2967,7 @@ static int32_t Menu_QueryLatestSplitScreenRelease(char * const version, size_t c
     return readOk;
 }
 
-static int32_t Menu_LaunchSplitScreenUpdater(char const * const downloadUrl)
+static int32_t Menu_LaunchSplitScreenUpdater(char const * const zipPath)
 {
     char exePath[BMAX_PATH];
     if (GetModuleFileNameA(nullptr, exePath, ARRAY_SIZE(exePath)) == 0)
@@ -2976,16 +2990,16 @@ static int32_t Menu_LaunchSplitScreenUpdater(char const * const downloadUrl)
     if (!CopyFileA(exePath, updaterPath, FALSE))
         return 0;
 
-    char updaterQuoted[BMAX_PATH * 2], rootQuoted[BMAX_PATH * 2], exeQuoted[BMAX_PATH * 2], urlQuoted[2048], versionQuoted[256];
+    char updaterQuoted[BMAX_PATH * 2], rootQuoted[BMAX_PATH * 2], exeQuoted[BMAX_PATH * 2], zipQuoted[BMAX_PATH * 2], versionQuoted[256];
     Menu_WindowsCommandLineQuote(updaterQuoted, sizeof(updaterQuoted), updaterPath);
     Menu_WindowsCommandLineQuote(rootQuoted, sizeof(rootQuoted), rootPath);
     Menu_WindowsCommandLineQuote(exeQuoted, sizeof(exeQuoted), exePath);
-    Menu_WindowsCommandLineQuote(urlQuoted, sizeof(urlQuoted), downloadUrl);
+    Menu_WindowsCommandLineQuote(zipQuoted, sizeof(zipQuoted), zipPath);
     Menu_WindowsCommandLineQuote(versionQuoted, sizeof(versionQuoted), g_updateLatestVersion[0] != '\0' ? g_updateLatestVersion : "latest version");
 
     char commandLine[BMAX_PATH * 6];
     Bsnprintf(commandLine, sizeof(commandLine), "%s -splitscreen-updater %lu %s %s %s %s",
-              updaterQuoted, (unsigned long)GetCurrentProcessId(), rootQuoted, exeQuoted, urlQuoted, versionQuoted);
+              updaterQuoted, (unsigned long)GetCurrentProcessId(), rootQuoted, exeQuoted, zipQuoted, versionQuoted);
 
     STARTUPINFOA startupInfo {};
     PROCESS_INFORMATION processInfo {};
@@ -3034,6 +3048,36 @@ static void Menu_FinishSplitScreenUpdateCheck(int32_t const ok)
 
 static void Menu_UpdateSplitScreenUpdateCheck(void)
 {
+    if (g_updateDownloadThread != nullptr)
+    {
+        DWORD exitCode = 0;
+        if (GetExitCodeThread(g_updateDownloadThread, &exitCode) && exitCode == STILL_ACTIVE)
+            return;
+
+        CloseHandle(g_updateDownloadThread);
+        g_updateDownloadThread = nullptr;
+
+        if (InterlockedCompareExchange(&g_updateDownloadResult, 0, 0) != 1)
+        {
+            remove(g_updateDownloadZipPath);
+            g_updateDownloadZipPath[0] = '\0';
+            Bstrncpyz(g_updateStatus, "Download failed", sizeof(g_updateStatus));
+            return;
+        }
+
+        Bsnprintf(g_updateStatus, sizeof(g_updateStatus), "Installing %s...", g_updateLatestVersion);
+        if (!Menu_LaunchSplitScreenUpdater(g_updateDownloadZipPath))
+        {
+            remove(g_updateDownloadZipPath);
+            g_updateDownloadZipPath[0] = '\0';
+            Bstrncpyz(g_updateStatus, "Could not start updater", sizeof(g_updateStatus));
+            return;
+        }
+
+        CONFIG_WriteSetup(0);
+        app_exit(EXIT_SUCCESS);
+    }
+
     if (g_updateCheckProcess == nullptr)
         return;
 
@@ -3100,23 +3144,44 @@ static void Menu_StartSplitScreenUpdateCheck(void)
 
 static void Menu_InstallSplitScreenUpdate(void)
 {
+    if (g_updateDownloadThread != nullptr)
+    {
+        Bsnprintf(g_updateStatus, sizeof(g_updateStatus), "Downloading %s...", g_updateLatestVersion);
+        return;
+    }
+
     if (g_updateInstallAvailable == UPDATE_INSTALL_NONE || g_updateDownloadUrl[0] == '\0')
     {
         Bstrncpyz(g_updateStatus, "No update ready", sizeof(g_updateStatus));
         return;
     }
 
-    Bsnprintf(g_updateStatus, sizeof(g_updateStatus), "%s %s...",
-              g_updateInstallAvailable == UPDATE_INSTALL_REINSTALL_LATEST ? "Reinstalling" : "Installing",
-              g_updateLatestVersion);
-    if (!Menu_LaunchSplitScreenUpdater(g_updateDownloadUrl))
+    char tempPath[BMAX_PATH];
+    if (!GetTempPathA(ARRAY_SIZE(tempPath), tempPath))
     {
-        Bstrncpyz(g_updateStatus, "Could not start updater", sizeof(g_updateStatus));
+        Bstrncpyz(g_updateStatus, "Could not prepare update", sizeof(g_updateStatus));
         return;
     }
 
-    CONFIG_WriteSetup(0);
-    app_exit(EXIT_SUCCESS);
+    Bsnprintf(g_updateDownloadZipPath, sizeof(g_updateDownloadZipPath), "%seduke32-split-screen-update-%lu.zip",
+              tempPath, (unsigned long)GetCurrentProcessId());
+    remove(g_updateDownloadZipPath);
+
+    splitScreenUpdateDownloadParams_t * const params = new splitScreenUpdateDownloadParams_t;
+    Bstrncpyz(params->url, g_updateDownloadUrl, sizeof(params->url));
+    Bstrncpyz(params->destination, g_updateDownloadZipPath, sizeof(params->destination));
+
+    InterlockedExchange(&g_updateDownloadResult, 0);
+    g_updateDownloadThread = CreateThread(nullptr, 0, Menu_DownloadSplitScreenUpdateThread, params, 0, nullptr);
+    if (g_updateDownloadThread == nullptr)
+    {
+        delete params;
+        g_updateDownloadZipPath[0] = '\0';
+        Bstrncpyz(g_updateStatus, "Could not start download", sizeof(g_updateStatus));
+        return;
+    }
+
+    Bsnprintf(g_updateStatus, sizeof(g_updateStatus), "Downloading %s...", g_updateLatestVersion);
 }
 #endif
 
@@ -4399,8 +4464,11 @@ static void Menu_Pre(MenuID_t cm)
     case MENU_GAMESETUP:
 #ifdef _WIN32
         Menu_UpdateSplitScreenUpdateCheck();
-        ME_GAMESETUP_INSTALLUPDATE.name = g_updateInstallAvailable == UPDATE_INSTALL_REINSTALL_LATEST ? "Reinstall Latest" : "Install Update";
+        ME_GAMESETUP_INSTALLUPDATE.name = g_updateDownloadThread != nullptr
+            ? "Downloading..."
+            : (g_updateInstallAvailable == UPDATE_INSTALL_REINSTALL_LATEST ? "Reinstall Latest" : "Install Update");
         MenuEntry_HideOnCondition(&ME_GAMESETUP_INSTALLUPDATE, g_updateInstallAvailable == UPDATE_INSTALL_NONE);
+        MenuEntry_DisableOnCondition(&ME_GAMESETUP_INSTALLUPDATE, g_updateDownloadThread != nullptr);
 #endif
         MEO_GAMESETUP_DEMOREC.options = (ps->gm&MODE_GAME) ? &MEOS_DemoRec : &MEOS_OffOn;
         MenuEntry_DisableOnCondition(&ME_GAMESETUP_DEMOREC, (ps->gm&MODE_GAME) && ud.m_recstat != 1);
@@ -4770,7 +4838,8 @@ static void Menu_DrawVerifyPrompt(int32_t x, int32_t y, const char * text, int n
 #endif
 }
 
-static void msaveloadtext(const vec2_t& origin, int level, int volume, int skill, const char *boardfn, int16_t /*health*/, int32_t playerCount)
+static void msaveloadtext(const vec2_t& origin, int level, int volume, int skill, const char *boardfn, int16_t /*health*/, int32_t playerCount,
+                          int32_t secrets, int32_t maxSecrets)
 {
     int const xoffset  = 22;
     int const xoffset2 = FURY ? 56 : 72;
@@ -4815,12 +4884,23 @@ static void msaveloadtext(const vec2_t& origin, int level, int volume, int skill
     mminitext(origin.x + (xoffset << 16), origin.y + (yoffset << 16), "Players:", MF_Minifont.pal_deselected_right);
     Bsprintf(tempbuf, "%d", displayPlayerCount);
     mminitext(origin.x + (xoffset2 << 16), origin.y + (yoffset << 16), tempbuf, MF_Minifont.pal_selected_right);
+    yoffset += 8;
+
+    if (secrets >= 0)
+    {
+        mminitext(origin.x + (xoffset << 16), origin.y + (yoffset << 16), "Secrets:", MF_Minifont.pal_deselected_right);
+        if (maxSecrets >= 0)
+            Bsprintf(tempbuf, "%d/%d", secrets, maxSecrets);
+        else
+            Bsprintf(tempbuf, "%d", secrets);
+        mminitext(origin.x + (xoffset2 << 16), origin.y + (yoffset << 16), tempbuf, MF_Minifont.pal_selected_right);
+    }
 }
 
 #ifdef SPLITSCREEN_MOD_HACKS
 static void Menu_DrawSplitScreenHelp(const vec2_t origin)
 {
-    Menu_BlackRectangle(origin.x + (12<<16), origin.y + (24<<16), 296<<16, 148<<16, 1|32);
+    Menu_BlackRectangle(origin.x + (12<<16), origin.y + (24<<16), 296<<16, 156<<16, 1|32);
 
     mgametextcenter(origin.x, origin.y + (30<<16), "SPLIT-SCREEN CONTROLS");
 
@@ -4865,6 +4945,7 @@ static void Menu_DrawSplitScreenHelp(const vec2_t origin)
     }
 
     creditsminitext(origin.x + (160<<16), origin.y + (156<<16), "IN-GAME: PRESS START ON AN EXTRA CONTROLLER TO JOIN", 12);
+    creditsminitext(origin.x + (160<<16), origin.y + (166<<16), "UPDATES: GAME SETUP > CHECK UPDATES", 12);
 }
 #endif
 
@@ -4907,6 +4988,14 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
         Menu_UpdateSplitScreenUpdateCheck();
         if (g_updateStatus[0] != '\0')
             creditsminitext(origin.x + (160<<16), origin.y + (136<<16), g_updateStatus, MF_Minifont.pal_selected);
+        else
+        {
+            char const * const version = (SPLITSCREEN_MOD_VERSION[0] == 'v' || SPLITSCREEN_MOD_VERSION[0] == 'V')
+                ? SPLITSCREEN_MOD_VERSION + 1
+                : SPLITSCREEN_MOD_VERSION;
+            Bsprintf(tempbuf, "Version %s", version);
+            creditsminitext(origin.x + (160<<16), origin.y + (136<<16), tempbuf, MF_Minifont.pal_selected);
+        }
         break;
 #endif
 
@@ -5035,8 +5124,12 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
             if (msv.isOldVer && !msv.brief.isExt)
                 break;
 
+            int32_t secrets = -1;
+            int32_t maxSecrets = -1;
+            G_ReadSaveDetailsMetadata(msv.brief.path, &secrets, &maxSecrets);
+
             msaveloadtext(origin, savehead.levnum, savehead.volnum, savehead.skill,
-                          savehead.boardfn, savehead.health, savehead.numplayers);
+                          savehead.boardfn, savehead.health, savehead.numplayers, secrets, maxSecrets);
         }
         break;
     }
@@ -5094,8 +5187,11 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
         else
             menutext_centeralign(origin.x + (101<<16), origin.y + ((97+SAVELOAD_LAYOUT_YSHIFT)<<16), "New");
 
+        int32_t secrets = 0;
+        Menu_GetCurrentCampaignTotalSecrets(&secrets);
+
         msaveloadtext(origin, ud.level_number, ud.volume_number, ud.player_skill,
-                              currentboardfilename, sprite[g_player[myconnectindex].ps->i].extra, ud.multimode);
+                              currentboardfilename, sprite[g_player[myconnectindex].ps->i].extra, ud.multimode, secrets, -1);
         break;
     }
 
@@ -5588,14 +5684,14 @@ static void Menu_PreInput(MenuEntry_t *entry)
         if (I_MenuLeft())
         {
             I_MenuLeftClear();
-            Menu_MoveReplayLevelSelection(-1);
-            S_PlaySound(KICK_HIT);
+            if (Menu_MoveReplayLevelSelection(-1))
+                S_PlaySound(KICK_HIT);
         }
         else if (I_MenuRight())
         {
             I_MenuRightClear();
-            Menu_MoveReplayLevelSelection(1);
-            S_PlaySound(KICK_HIT);
+            if (Menu_MoveReplayLevelSelection(1))
+                S_PlaySound(KICK_HIT);
         }
         break;
 
@@ -5953,6 +6049,40 @@ static void Menu_GetCurrentCampaignSecrets(int32_t * const secrets, int32_t * co
         *maxSecrets = maxFound;
 }
 
+static void Menu_GetCurrentCampaignTotalSecrets(int32_t * const secrets)
+{
+    int32_t currentLevelSecrets = 0;
+    int32_t currentLevelMaxSecrets = 0;
+    Menu_GetCurrentCampaignSecrets(&currentLevelSecrets, &currentLevelMaxSecrets);
+
+    int32_t found = 0;
+
+    for (int32_t volumeIndex = 0; volumeIndex < g_volumeCnt; ++volumeIndex)
+    {
+        for (int32_t levelIndex = 0; levelIndex < MAXLEVELS; ++levelIndex)
+        {
+            if (g_mapInfo[volumeIndex * MAXLEVELS + levelIndex].filename == nullptr)
+                continue;
+
+            int32_t played = 0;
+            int32_t levelSecrets = 0;
+            CONFIG_GetSplitScreenLevelProgress(g_addonNum, volumeIndex, levelIndex, &played, &levelSecrets, nullptr, nullptr);
+
+            if (volumeIndex == ud.volume_number && levelIndex == ud.level_number)
+            {
+                played = 1;
+                levelSecrets = max<int32_t>(levelSecrets, currentLevelSecrets);
+            }
+
+            if (played)
+                found += max<int32_t>(levelSecrets, 0);
+        }
+    }
+
+    if (secrets != nullptr)
+        *secrets = found;
+}
+
 static void Menu_ResetReplayLevelSecretTotalCacheIfNeeded(void)
 {
     if (g_replayLevelSecretTotalCacheAddon == g_addonNum)
@@ -6184,13 +6314,19 @@ static void Menu_PopulateReplayLevelMenu(void)
     Menu_AdjustForCurrentEntryAssignmentBlind(&M_LEVELREPLAY);
 }
 
-static void Menu_MoveReplayLevelSelection(int32_t const direction)
+static int32_t Menu_MoveReplayLevelSelection(int32_t const direction)
 {
     if (g_replayLevelCount <= 1 || direction == 0)
-        return;
+        return 0;
 
-    g_replayLevelSelectedIndex = (g_replayLevelSelectedIndex + direction + g_replayLevelCount) % g_replayLevelCount;
+    int32_t const previousIndex = g_replayLevelSelectedIndex;
+    g_replayLevelSelectedIndex = clamp<int32_t>(g_replayLevelSelectedIndex + direction, 0, g_replayLevelCount - 1);
+
+    if (g_replayLevelSelectedIndex == previousIndex)
+        return 0;
+
     Menu_UpdateReplayLevelActionEntry();
+    return 1;
 }
 
 static int32_t Menu_GetReplayLevelThumbnailTile(int32_t const entryIndex)
@@ -6277,24 +6413,28 @@ static void Menu_DrawReplayLevelDetails(vec2_t const origin)
         int32_t const rightX = origin.x + (286<<16);
         int32_t const arrowY = origin.y + (50<<16);
         int32_t const rightArrowY = arrowY + (14<<16);
+        int32_t const canMoveLeft = entryIndex > 0;
+        int32_t const canMoveRight = entryIndex < g_replayLevelCount - 1;
 
-        Menu_DrawReplayLevelArrow(leftX, arrowY, -1);
-        Menu_DrawReplayLevelArrow(rightX, rightArrowY, 1);
+        if (canMoveLeft)
+            Menu_DrawReplayLevelArrow(leftX, arrowY, -1);
+        if (canMoveRight)
+            Menu_DrawReplayLevelArrow(rightX, rightArrowY, 1);
 
 #if !defined EDUKE32_TOUCH_DEVICES
         if (MOUSEACTIVECONDITIONAL(!m_mousecaught && g_mouseClickState == MOUSE_RELEASED))
         {
-            if (!Menu_MouseOutsideBounds(&m_mousepos, leftX - (14<<16), arrowY - (14<<16), 28<<16, 28<<16))
+            if (canMoveLeft && !Menu_MouseOutsideBounds(&m_mousepos, leftX - (14<<16), arrowY - (14<<16), 28<<16, 28<<16))
             {
-                Menu_MoveReplayLevelSelection(-1);
+                if (Menu_MoveReplayLevelSelection(-1))
+                    S_PlaySound(KICK_HIT);
                 m_mousecaught = 1;
-                S_PlaySound(KICK_HIT);
             }
-            else if (!Menu_MouseOutsideBounds(&m_mousepos, rightX - (14<<16), rightArrowY - (14<<16), 28<<16, 28<<16))
+            else if (canMoveRight && !Menu_MouseOutsideBounds(&m_mousepos, rightX - (14<<16), rightArrowY - (14<<16), 28<<16, 28<<16))
             {
-                Menu_MoveReplayLevelSelection(1);
+                if (Menu_MoveReplayLevelSelection(1))
+                    S_PlaySound(KICK_HIT);
                 m_mousecaught = 1;
-                S_PlaySound(KICK_HIT);
             }
         }
 #endif
