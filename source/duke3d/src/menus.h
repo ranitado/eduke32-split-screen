@@ -42,6 +42,13 @@ extern int32_t cvar_kbo_type;
 extern int32_t cvar_kbconfirm;
 
 void M_UpdateDeveloperModeToggle(void);
+void M_ResetReplayCampaignProgress(void);
+void M_RecordReplayCurrentLevelProgress(void);
+void M_RecordReplayCurrentLevelCompleted(void);
+void M_LoadReplayProgressMetadata(char const *fn);
+void M_WriteReplayProgressMetadata(char const *fn);
+int32_t M_GetReplayCampaignTotalSecrets(void);
+int32_t M_GetReplayCampaignLevelsCompleted(void);
 
 // #define EDUKE32_SIMPLE_MENU
 

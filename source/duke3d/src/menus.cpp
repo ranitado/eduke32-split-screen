@@ -77,6 +77,9 @@ static void Menu_PopulateReplayLevelMenu(void);
 static void Menu_DrawReplayLevelDetails(vec2_t const origin);
 static int32_t Menu_MoveReplayLevelSelection(int32_t direction);
 static int32_t Menu_CanUseReplayLevels(void);
+static void Menu_RecordReplayLevelReached(int32_t volumeIndex, int32_t levelIndex);
+static void Menu_RecordReplayLevelProgress(int32_t volumeIndex, int32_t levelIndex, int32_t secrets, int32_t maxSecrets);
+static void Menu_RecordReplayLevelCompleted(int32_t volumeIndex, int32_t levelIndex);
 static void Menu_SelectFirstEpisodeOfCurrentContent(void);
 static int32_t Menu_GetSkillSound(int32_t skillIndex);
 static void Menu_RefreshSkillMenuNames(void);
@@ -84,7 +87,6 @@ static void Menu_StartConfiguredGame(int32_t skillIndex, int32_t skillSound);
 static void Menu_StartGameWithoutSkill(void);
 static void Menu_StartReplayLevel(void);
 static void Menu_GetCurrentCampaignSecrets(int32_t *secrets, int32_t *maxSecrets);
-static void Menu_GetCurrentCampaignTotalSecrets(int32_t *secrets);
 #ifdef _WIN32
 static void Menu_StartSplitScreenUpdateCheck(void);
 static void Menu_InstallSplitScreenUpdate(void);
@@ -282,7 +284,7 @@ MenuFont_t MF_Minifont =              { { 4<<16, 5<<16 },   { 1<<16, 1<<16 },0, 
 
 
 static MenuMenuFormat_t MMF_Top_Main =             { {  MENU_MARGIN_CENTER<<16, 55<<16, }, -(170<<16) };
-static MenuMenuFormat_t MMF_Top_MainInGame =       { {  MENU_MARGIN_CENTER<<16, 56<<16, }, 190<<16 };
+static MenuMenuFormat_t MMF_Top_MainInGame =       { {  MENU_MARGIN_CENTER<<16, 59<<16, }, 190<<16 };
 static MenuMenuFormat_t MMF_Top_Episode =          { {  MENU_MARGIN_CENTER<<16, 48<<16, }, -(190<<16) };
 static MenuMenuFormat_t MMF_Top_ExtraContent =     { {  MENU_MARGIN_CENTER<<16, 68<<16, }, -(190<<16) };
 static MenuMenuFormat_t MMF_Top_LevelSelect =      { {  MENU_MARGIN_CENTER<<16, 50<<16, }, 186<<16 };
@@ -462,7 +464,6 @@ static MenuEntry_t *MEL_MAIN_INGAME[] = {
     &ME_MAIN_SAVEGAME,
     &ME_MAIN_LOADGAME,
     &ME_MAIN_OPTIONS,
-    &ME_MAIN_HELP,
     &ME_MAIN_QUITTOTITLE,
 #ifndef EDUKE32_RETAIL_MENU
     &ME_MAIN_QUITGAME,
@@ -562,6 +563,11 @@ static int32_t g_replayLevelSecretTotalCacheAddon = INT32_MIN;
 static int32_t g_replayLevelSecretTotalCache[MAXVOLUMES * MAXLEVELS];
 static int32_t g_replayLevelReachedAddon = INT32_MIN;
 static int32_t g_replayLevelReached[MAXVOLUMES];
+static int32_t g_replayCampaignProgressAddon = INT32_MIN;
+static int32_t g_replayLevelPlayed[MAXVOLUMES * MAXLEVELS];
+static int32_t g_replayLevelCompleted[MAXVOLUMES * MAXLEVELS];
+static int32_t g_replayLevelCampaignSecrets[MAXVOLUMES * MAXLEVELS];
+static int32_t g_replayLevelCampaignMaxSecrets[MAXVOLUMES * MAXLEVELS];
 
 static MenuLink_t MEO_NEWGAMECUSTOM_TEMPLATE = { MENU_NEWGAMECUSTOMSUB, MA_Advance, };
 static MenuLink_t MEO_NEWGAMECUSTOM[MAXMENUGAMEPLAYENTRIES];
@@ -2648,6 +2654,7 @@ static int32_t Menu_ShouldSkipUpdateEntry(char const * const rel)
 
     return Menu_UpdatePathHasSuffix(rel, ".grp") || Menu_UpdatePathHasSuffix(rel, ".cfg") ||
            Menu_UpdatePathHasSuffix(rel, ".esv") || Menu_UpdatePathHasSuffix(rel, ".esv.addon") || Menu_UpdatePathHasSuffix(rel, ".esv.details") ||
+           Menu_UpdatePathHasSuffix(rel, ".esv.progress") ||
            Menu_UpdatePathHasSuffix(rel, ".sav") || Menu_UpdatePathHasSuffix(rel, ".log");
 }
 
@@ -4838,13 +4845,12 @@ static void Menu_DrawVerifyPrompt(int32_t x, int32_t y, const char * text, int n
 #endif
 }
 
-static void msaveloadtext(const vec2_t& origin, int level, int volume, int skill, const char *boardfn, int16_t /*health*/, int32_t playerCount,
+static void msaveloadtext(const vec2_t& origin, int level, int volume, int skill, const char *boardfn, int16_t /*health*/, int32_t levelsCompleted,
                           int32_t secrets, int32_t maxSecrets)
 {
     int const xoffset  = 22;
     int const xoffset2 = FURY ? 56 : 72;
     int yoffset = 150 + SAVELOAD_LAYOUT_YSHIFT + ((!!FURY)<<1);
-    int32_t const displayPlayerCount = max<int32_t>(playerCount, 1);
     int const boxHeight = 42 - ((!!FURY)<<1);
 
     auto name = g_mapInfo[(volume * MAXLEVELS) + level].name;
@@ -4881,9 +4887,12 @@ static void msaveloadtext(const vec2_t& origin, int level, int volume, int skill
         yoffset += 8;
     }
 
-    mminitext(origin.x + (xoffset << 16), origin.y + (yoffset << 16), "Players:", MF_Minifont.pal_deselected_right);
-    Bsprintf(tempbuf, "%d", displayPlayerCount);
-    mminitext(origin.x + (xoffset2 << 16), origin.y + (yoffset << 16), tempbuf, MF_Minifont.pal_selected_right);
+    mminitext(origin.x + (xoffset << 16), origin.y + (yoffset << 16), "Levels completed:", MF_Minifont.pal_deselected_right);
+    if (levelsCompleted >= 0)
+        Bsprintf(tempbuf, "%d", levelsCompleted);
+    else
+        Bsprintf(tempbuf, "--");
+    mminitext(origin.x + ((FURY ? 88 : 96) << 16), origin.y + (yoffset << 16), tempbuf, MF_Minifont.pal_selected_right);
     yoffset += 8;
 
     if (secrets >= 0)
@@ -5126,10 +5135,11 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
 
             int32_t secrets = -1;
             int32_t maxSecrets = -1;
-            G_ReadSaveDetailsMetadata(msv.brief.path, &secrets, &maxSecrets);
+            int32_t levelsCompleted = -1;
+            G_ReadSaveDetailsMetadata(msv.brief.path, &secrets, &maxSecrets, &levelsCompleted);
 
             msaveloadtext(origin, savehead.levnum, savehead.volnum, savehead.skill,
-                          savehead.boardfn, savehead.health, savehead.numplayers, secrets, maxSecrets);
+                          savehead.boardfn, savehead.health, levelsCompleted, secrets, maxSecrets);
         }
         break;
     }
@@ -5187,11 +5197,11 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
         else
             menutext_centeralign(origin.x + (101<<16), origin.y + ((97+SAVELOAD_LAYOUT_YSHIFT)<<16), "New");
 
-        int32_t secrets = 0;
-        Menu_GetCurrentCampaignTotalSecrets(&secrets);
+        int32_t const secrets = M_GetReplayCampaignTotalSecrets();
+        int32_t const levelsCompleted = M_GetReplayCampaignLevelsCompleted();
 
         msaveloadtext(origin, ud.level_number, ud.volume_number, ud.player_skill,
-                              currentboardfilename, sprite[g_player[myconnectindex].ps->i].extra, ud.multimode, secrets, -1);
+                              currentboardfilename, sprite[g_player[myconnectindex].ps->i].extra, levelsCompleted, secrets, -1);
         break;
     }
 
@@ -6049,13 +6059,17 @@ static void Menu_GetCurrentCampaignSecrets(int32_t * const secrets, int32_t * co
         *maxSecrets = maxFound;
 }
 
-static void Menu_GetCurrentCampaignTotalSecrets(int32_t * const secrets)
+int32_t M_GetReplayCampaignTotalSecrets(void)
 {
     int32_t currentLevelSecrets = 0;
     int32_t currentLevelMaxSecrets = 0;
     Menu_GetCurrentCampaignSecrets(&currentLevelSecrets, &currentLevelMaxSecrets);
 
     int32_t found = 0;
+    int32_t const currentIndex = ud.volume_number * MAXLEVELS + ud.level_number;
+
+    if (g_replayCampaignProgressAddon != g_addonNum)
+        M_ResetReplayCampaignProgress();
 
     for (int32_t volumeIndex = 0; volumeIndex < g_volumeCnt; ++volumeIndex)
     {
@@ -6064,11 +6078,11 @@ static void Menu_GetCurrentCampaignTotalSecrets(int32_t * const secrets)
             if (g_mapInfo[volumeIndex * MAXLEVELS + levelIndex].filename == nullptr)
                 continue;
 
-            int32_t played = 0;
-            int32_t levelSecrets = 0;
-            CONFIG_GetSplitScreenLevelProgress(g_addonNum, volumeIndex, levelIndex, &played, &levelSecrets, nullptr, nullptr);
+            int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
+            int32_t played = g_replayLevelPlayed[progressIndex];
+            int32_t levelSecrets = g_replayLevelCampaignSecrets[progressIndex];
 
-            if (volumeIndex == ud.volume_number && levelIndex == ud.level_number)
+            if (progressIndex == currentIndex)
             {
                 played = 1;
                 levelSecrets = max<int32_t>(levelSecrets, currentLevelSecrets);
@@ -6079,8 +6093,130 @@ static void Menu_GetCurrentCampaignTotalSecrets(int32_t * const secrets)
         }
     }
 
-    if (secrets != nullptr)
-        *secrets = found;
+    return found;
+}
+
+int32_t M_GetReplayCampaignLevelsCompleted(void)
+{
+    if (g_replayCampaignProgressAddon != g_addonNum)
+        M_ResetReplayCampaignProgress();
+
+    int32_t completed = 0;
+
+    for (int32_t volumeIndex = 0; volumeIndex < g_volumeCnt; ++volumeIndex)
+    {
+        for (int32_t levelIndex = 0; levelIndex < MAXLEVELS; ++levelIndex)
+        {
+            if (g_mapInfo[volumeIndex * MAXLEVELS + levelIndex].filename == nullptr)
+                continue;
+
+            int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
+            if (g_replayLevelCompleted[progressIndex])
+                ++completed;
+        }
+    }
+
+    return completed;
+}
+
+static int32_t Menu_ReadReplayProgressMetadataPath(char const * const fn)
+{
+    if (fn == nullptr || fn[0] == '\0')
+        return -1;
+
+    char progressMeta[BMAX_PATH + 16];
+    Bsnprintf(progressMeta, sizeof(progressMeta), "%s.progress", fn);
+
+    BFILE * const fp = Bfopen(progressMeta, "rb");
+    if (fp == nullptr)
+        return -1;
+
+    int32_t fileAddon = INT32_MIN;
+    char line[128] = {};
+
+    while (Bfgets(line, sizeof(line), fp) != nullptr)
+    {
+        int32_t addon = 0;
+        if (Bsscanf(line, "addon %d", &addon) == 1)
+        {
+            fileAddon = addon;
+            continue;
+        }
+
+        int32_t volumeIndex = 0, levelIndex = 0, played = 0, completed = 0, secrets = 0, maxSecrets = 0;
+        int32_t fieldCount = Bsscanf(line, "level %d %d %d %d %d %d", &volumeIndex, &levelIndex, &played, &completed, &secrets, &maxSecrets);
+        if (fieldCount == 5)
+        {
+            completed = 0;
+            fieldCount = Bsscanf(line, "level %d %d %d %d %d", &volumeIndex, &levelIndex, &played, &secrets, &maxSecrets);
+        }
+
+        if ((fieldCount == 6 || fieldCount == 5) && played && (unsigned)volumeIndex < MAXVOLUMES && (unsigned)levelIndex < MAXLEVELS)
+        {
+            int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
+            g_replayLevelPlayed[progressIndex] = 1;
+            g_replayLevelCompleted[progressIndex] = completed != 0;
+            g_replayLevelCampaignSecrets[progressIndex] = max<int32_t>(secrets, 0);
+            g_replayLevelCampaignMaxSecrets[progressIndex] = max<int32_t>(maxSecrets, 0);
+            Menu_RecordReplayLevelReached(volumeIndex, levelIndex);
+        }
+    }
+
+    Bfclose(fp);
+
+    if (fileAddon != INT32_MIN && fileAddon != g_addonNum)
+    {
+        M_ResetReplayCampaignProgress();
+        return -1;
+    }
+
+    return 0;
+}
+
+void M_LoadReplayProgressMetadata(char const * const fn)
+{
+    M_ResetReplayCampaignProgress();
+
+    if (Menu_ReadReplayProgressMetadataPath(fn) == 0)
+        return;
+
+    char modPath[BMAX_PATH];
+    if (G_ModDirSnprintf(modPath, sizeof(modPath), "%s", fn) == 0)
+        Menu_ReadReplayProgressMetadataPath(modPath);
+}
+
+void M_WriteReplayProgressMetadata(char const * const fn)
+{
+    if (fn == nullptr || fn[0] == '\0')
+        return;
+
+    M_RecordReplayCurrentLevelProgress();
+
+    char progressMeta[BMAX_PATH + 16];
+    Bsnprintf(progressMeta, sizeof(progressMeta), "%s.progress", fn);
+
+    BFILE * const fp = Bfopen(progressMeta, "wb");
+    if (fp == nullptr)
+        return;
+
+    Bfprintf(fp, "addon %d\n", g_addonNum);
+
+    for (int32_t volumeIndex = 0; volumeIndex < MAXVOLUMES; ++volumeIndex)
+    {
+        for (int32_t levelIndex = 0; levelIndex < MAXLEVELS; ++levelIndex)
+        {
+            int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
+            if (!g_replayLevelPlayed[progressIndex])
+                continue;
+
+            Bfprintf(fp, "level %d %d %d %d %d %d\n",
+                     volumeIndex, levelIndex, 1, g_replayLevelCompleted[progressIndex] != 0,
+                     max<int32_t>(g_replayLevelCampaignSecrets[progressIndex], 0),
+                     max<int32_t>(g_replayLevelCampaignMaxSecrets[progressIndex], 0));
+        }
+    }
+
+    Bfclose(fp);
 }
 
 static void Menu_ResetReplayLevelSecretTotalCacheIfNeeded(void)
@@ -6122,6 +6258,79 @@ static int32_t Menu_GetReplayLevelReached(int32_t const volumeIndex)
 
     Menu_ResetReplayLevelReachedIfNeeded();
     return g_replayLevelReached[volumeIndex];
+}
+
+void M_ResetReplayCampaignProgress(void)
+{
+    g_replayCampaignProgressAddon = g_addonNum;
+
+    for (auto &played : g_replayLevelPlayed)
+        played = 0;
+    for (auto &completed : g_replayLevelCompleted)
+        completed = 0;
+    for (auto &secrets : g_replayLevelCampaignSecrets)
+        secrets = 0;
+    for (auto &maxSecrets : g_replayLevelCampaignMaxSecrets)
+        maxSecrets = 0;
+
+    Menu_ResetReplayLevelReached();
+}
+
+static void Menu_ResetReplayCampaignProgressIfNeeded(void)
+{
+    if (g_replayCampaignProgressAddon != g_addonNum)
+        M_ResetReplayCampaignProgress();
+}
+
+static void Menu_RecordReplayLevelProgress(int32_t const volumeIndex, int32_t const levelIndex,
+                                           int32_t const secrets, int32_t const maxSecrets)
+{
+    if ((unsigned)volumeIndex >= MAXVOLUMES || (unsigned)levelIndex >= MAXLEVELS)
+        return;
+
+    Menu_ResetReplayCampaignProgressIfNeeded();
+
+    int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
+    g_replayLevelPlayed[progressIndex] = 1;
+    g_replayLevelCampaignSecrets[progressIndex] = max<int32_t>(g_replayLevelCampaignSecrets[progressIndex], secrets);
+    g_replayLevelCampaignMaxSecrets[progressIndex] = max<int32_t>(g_replayLevelCampaignMaxSecrets[progressIndex], maxSecrets);
+
+    Menu_RecordReplayLevelReached(volumeIndex, levelIndex);
+}
+
+static void Menu_RecordReplayLevelCompleted(int32_t const volumeIndex, int32_t const levelIndex)
+{
+    if ((unsigned)volumeIndex >= MAXVOLUMES || (unsigned)levelIndex >= MAXLEVELS)
+        return;
+
+    int32_t secrets = 0, maxSecrets = 0;
+    Menu_GetCurrentCampaignSecrets(&secrets, &maxSecrets);
+    Menu_RecordReplayLevelProgress(volumeIndex, levelIndex, secrets, maxSecrets);
+
+    int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
+    g_replayLevelCompleted[progressIndex] = 1;
+}
+
+static int32_t Menu_GetReplayLevelProgress(int32_t const volumeIndex, int32_t const levelIndex,
+                                           int32_t * const secrets, int32_t * const maxSecrets)
+{
+    if (secrets != nullptr)
+        *secrets = 0;
+    if (maxSecrets != nullptr)
+        *maxSecrets = 0;
+
+    if ((unsigned)volumeIndex >= MAXVOLUMES || (unsigned)levelIndex >= MAXLEVELS)
+        return 0;
+
+    Menu_ResetReplayCampaignProgressIfNeeded();
+
+    int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
+    if (secrets != nullptr)
+        *secrets = g_replayLevelCampaignSecrets[progressIndex];
+    if (maxSecrets != nullptr)
+        *maxSecrets = g_replayLevelCampaignMaxSecrets[progressIndex];
+
+    return g_replayLevelPlayed[progressIndex];
 }
 
 static int32_t Menu_CountMapSecretSectors(char const * const filename)
@@ -6204,8 +6413,20 @@ static void Menu_UpdateCurrentReplayLevelProgress(void)
 
     int32_t secrets = 0, maxSecrets = 0;
     Menu_GetCurrentCampaignSecrets(&secrets, &maxSecrets);
-    CONFIG_SetSplitScreenLevelProgress(g_addonNum, ud.volume_number, ud.level_number, secrets, maxSecrets, 0);
-    Menu_RecordReplayLevelReached(ud.volume_number, ud.level_number);
+    Menu_RecordReplayLevelProgress(ud.volume_number, ud.level_number, secrets, maxSecrets);
+}
+
+void M_RecordReplayCurrentLevelProgress(void)
+{
+    Menu_UpdateCurrentReplayLevelProgress();
+}
+
+void M_RecordReplayCurrentLevelCompleted(void)
+{
+    if (!Menu_CanUseReplayLevels())
+        return;
+
+    Menu_RecordReplayLevelCompleted(ud.volume_number, ud.level_number);
 }
 
 static int32_t Menu_IsReplayLevelCurrent(int32_t const entryIndex)
@@ -6253,7 +6474,8 @@ static void Menu_PopulateReplayLevelMenu(void)
                 continue;
 
             int32_t secrets = 0, maxSecrets = 0, bestTime = 0;
-            CONFIG_GetSplitScreenLevelProgress(g_addonNum, volumeIndex, levelIndex, nullptr, &secrets, &maxSecrets, &bestTime);
+            Menu_GetReplayLevelProgress(volumeIndex, levelIndex, &secrets, &maxSecrets);
+            CONFIG_GetSplitScreenLevelProgress(g_addonNum, volumeIndex, levelIndex, nullptr, nullptr, nullptr, &bestTime);
             int32_t const reachedInEpisode = levelIndex <= maxReachedLevel;
             if (!reachedInEpisode)
                 continue;
@@ -6807,7 +7029,7 @@ static void Menu_StartConfiguredGame(int32_t const skillIndex, int32_t const ski
     ud.m_monsters_off = ud.monsters_off = 0;
     ud.multimode = Menu_GetCurrentLocalPlayerCount();
     Menu_AssignStartingGamepadToPlayer1();
-    Menu_ResetReplayLevelReached();
+    M_ResetReplayCampaignProgress();
     G_NewGame_EnterLevel();
 }
 

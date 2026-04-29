@@ -527,12 +527,12 @@ void CONFIG_SetDefaults(void)
     ud.config.JoystickAimWeight = 4;
     ud.config.JoystickViewCentering = CONFIG_CONTROLLER_VIEW_CENTERING_DEFAULT;
     ud.config.JoystickAimAssist = 1;
-    ud.config.SplitScreenSeparateKeyboardMouse = 0;
+    ud.config.SplitScreenSeparateKeyboardMouse = 1;
     ud.config.SplitScreenHudStyle = HUD_STYLE_SPLITSCREEN;
-    ud.config.SplitScreenPlayerInput[0] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
-    ud.config.SplitScreenPlayerInput[1] = SPLITSCREEN_INPUT_GAMEPAD1;
-    ud.config.SplitScreenPlayerInput[2] = SPLITSCREEN_INPUT_GAMEPAD2;
-    ud.config.SplitScreenPlayerInput[3] = SPLITSCREEN_INPUT_GAMEPAD3;
+    ud.config.SplitScreenPlayerInput[0] = SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1;
+    ud.config.SplitScreenPlayerInput[1] = SPLITSCREEN_INPUT_GAMEPAD2;
+    ud.config.SplitScreenPlayerInput[2] = SPLITSCREEN_INPUT_GAMEPAD3;
+    ud.config.SplitScreenPlayerInput[3] = SPLITSCREEN_INPUT_GAMEPAD4;
     for (int i = 0; i < MAXSPLITSCREENCONTROLLERPROFILES; ++i)
     {
         ud.config.SplitScreenJoystickAimWeight[i] = ud.config.JoystickAimWeight;

@@ -21,6 +21,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 //-------------------------------------------------------------------------
 
 #include "duke3d.h"
+#include "menus.h"
 #include "premap.h"
 #include "prlights.h"
 #include "md4.h"
@@ -748,6 +749,8 @@ int32_t G_LoadPlayer(savebrief_t & sv)
         // sv_postudload();
         sv_update_app_title(mapidx);
         VM_OnEvent(EVENT_LOADGAME, g_player[screenpeek].ps->i, screenpeek);
+        M_LoadReplayProgressMetadata(sv.path);
+        M_RecordReplayCurrentLevelProgress();
 
         return 0;
     }
@@ -835,6 +838,8 @@ int32_t G_LoadPlayer(savebrief_t & sv)
     sv_viewscreen_cleanup();
     sv_update_app_title(mapidx);
     VM_OnEvent(EVENT_LOADGAME, g_player[screenpeek].ps->i, screenpeek, -1, h.userbytever);
+    M_LoadReplayProgressMetadata(sv.path);
+    M_RecordReplayCurrentLevelProgress();
     kclose(fil);
 
     return 0;
@@ -885,6 +890,9 @@ void G_DeleteSave(savebrief_t const & sv)
     char detailsMeta[BMAX_PATH + 16];
     Bsnprintf(detailsMeta, sizeof(detailsMeta), "%s.details", temp);
     buildvfs_unlink(detailsMeta);
+    char progressMeta[BMAX_PATH + 16];
+    Bsnprintf(progressMeta, sizeof(progressMeta), "%s.progress", temp);
+    buildvfs_unlink(progressMeta);
     Bstrcat(temp, ".ext");
     buildvfs_unlink(temp);
 }
@@ -932,7 +940,7 @@ int32_t G_ReadSaveAddonMetadata(char const * const fn)
     return -1;
 }
 
-static int32_t G_TryReadSaveDetailsMetadata(char const * const fn, int32_t * const secrets, int32_t * const maxSecrets)
+static int32_t G_TryReadSaveDetailsMetadata(char const * const fn, int32_t * const secrets, int32_t * const maxSecrets, int32_t * const levelsCompleted)
 {
     if (fn == nullptr || fn[0] == '\0')
         return -1;
@@ -947,13 +955,24 @@ static int32_t G_TryReadSaveDetailsMetadata(char const * const fn, int32_t * con
     char line[64] = {};
     int32_t found = -1;
     int32_t total = -1;
+    int32_t completed = -1;
 
-    if (Bfgets(line, sizeof(line), fp) != nullptr)
+    while (Bfgets(line, sizeof(line), fp) != nullptr)
     {
         if (Bsscanf(line, "secrets_total %d", &found) == 1)
+        {
             total = -1;
-        else if (Bsscanf(line, "secrets %d %d", &found, &total) != 2)
-            Bsscanf(line, "%d %d", &found, &total);
+            continue;
+        }
+
+        if (Bsscanf(line, "levels_completed %d", &completed) == 1)
+            continue;
+
+        if (found < 0 && completed < 0)
+        {
+            if (Bsscanf(line, "secrets %d %d", &found, &total) != 2)
+                Bsscanf(line, "%d %d", &found, &total);
+        }
     }
 
     Bfclose(fp);
@@ -965,19 +984,21 @@ static int32_t G_TryReadSaveDetailsMetadata(char const * const fn, int32_t * con
         *secrets = found;
     if (maxSecrets != nullptr)
         *maxSecrets = total;
+    if (levelsCompleted != nullptr)
+        *levelsCompleted = completed;
 
     return 0;
 }
 
-int32_t G_ReadSaveDetailsMetadata(char const * const fn, int32_t * const secrets, int32_t * const maxSecrets)
+int32_t G_ReadSaveDetailsMetadata(char const * const fn, int32_t * const secrets, int32_t * const maxSecrets, int32_t * const levelsCompleted)
 {
-    if (G_TryReadSaveDetailsMetadata(fn, secrets, maxSecrets) == 0)
+    if (G_TryReadSaveDetailsMetadata(fn, secrets, maxSecrets, levelsCompleted) == 0)
         return 0;
 
     char modPath[BMAX_PATH];
     if (G_ModDirSnprintf(modPath, sizeof(modPath), "%s", fn) == 0)
     {
-        if (G_TryReadSaveDetailsMetadata(modPath, secrets, maxSecrets) == 0)
+        if (G_TryReadSaveDetailsMetadata(modPath, secrets, maxSecrets, levelsCompleted) == 0)
             return 0;
     }
 
@@ -1002,66 +1023,12 @@ static void G_WriteSaveAddonMetadata(char const * const fn)
 
 static void G_GetCurrentSaveSecretCounts(int32_t * const secrets, int32_t * const maxSecrets)
 {
-    int32_t currentLevelSecrets = 0;
-    int32_t currentLevelMaxSecrets = 0;
-
-    if (G_HaveSplitScreen())
-    {
-        for (int32_t viewIndex = 0, playerCount = G_GetSplitScreenPlayerCount(); viewIndex < playerCount; ++viewIndex)
-        {
-            int32_t const playerNum = G_GetSplitScreenPlayer(viewIndex);
-            DukePlayer_t const * const pPlayer = ((unsigned)playerNum < MAXPLAYERS) ? g_player[playerNum].ps : nullptr;
-
-            if (pPlayer == nullptr)
-                continue;
-
-            currentLevelSecrets += pPlayer->secret_rooms;
-            currentLevelMaxSecrets = max<int32_t>(currentLevelMaxSecrets, pPlayer->max_secret_rooms);
-        }
-    }
-    else
-    {
-        DukePlayer_t const * const pPlayer = g_player[myconnectindex].ps;
-        if (pPlayer != nullptr)
-        {
-            currentLevelSecrets = pPlayer->secret_rooms;
-            currentLevelMaxSecrets = pPlayer->max_secret_rooms;
-        }
-    }
-
-    int32_t found = 0;
-    int32_t total = -1;
-
-    for (int32_t volumeIndex = 0; volumeIndex < g_volumeCnt; ++volumeIndex)
-    {
-        for (int32_t levelIndex = 0; levelIndex < MAXLEVELS; ++levelIndex)
-        {
-            if (g_mapInfo[volumeIndex * MAXLEVELS + levelIndex].filename == nullptr)
-                continue;
-
-            int32_t played = 0;
-            int32_t levelSecrets = 0;
-            int32_t levelMaxSecrets = 0;
-            CONFIG_GetSplitScreenLevelProgress(g_addonNum, volumeIndex, levelIndex, &played, &levelSecrets, &levelMaxSecrets, nullptr);
-
-            if (volumeIndex == ud.volume_number && levelIndex == ud.level_number)
-            {
-                played = 1;
-                levelSecrets = max<int32_t>(levelSecrets, currentLevelSecrets);
-                levelMaxSecrets = max<int32_t>(levelMaxSecrets, currentLevelMaxSecrets);
-            }
-
-            if (!played)
-                continue;
-
-            found += max<int32_t>(levelSecrets, 0);
-        }
-    }
+    M_RecordReplayCurrentLevelProgress();
 
     if (secrets != nullptr)
-        *secrets = found;
+        *secrets = M_GetReplayCampaignTotalSecrets();
     if (maxSecrets != nullptr)
-        *maxSecrets = total;
+        *maxSecrets = -1;
 }
 
 static void G_WriteSaveDetailsMetadata(char const * const fn)
@@ -1072,6 +1039,7 @@ static void G_WriteSaveDetailsMetadata(char const * const fn)
     int32_t secrets = 0;
     int32_t maxSecrets = 0;
     G_GetCurrentSaveSecretCounts(&secrets, &maxSecrets);
+    int32_t const levelsCompleted = M_GetReplayCampaignLevelsCompleted();
 
     char detailsMeta[BMAX_PATH + 16];
     Bsnprintf(detailsMeta, sizeof(detailsMeta), "%s.details", fn);
@@ -1081,6 +1049,7 @@ static void G_WriteSaveDetailsMetadata(char const * const fn)
         return;
 
     Bfprintf(fp, "secrets_total %d\n", secrets);
+    Bfprintf(fp, "levels_completed %d\n", levelsCompleted);
     Bfclose(fp);
 }
 
@@ -1184,6 +1153,7 @@ int32_t G_SavePlayer(savebrief_t & sv, bool isAutoSave)
     buildvfs_fclose(fil);
     G_WriteSaveAddonMetadata(fn);
     G_WriteSaveDetailsMetadata(fn);
+    M_WriteReplayProgressMetadata(fn);
 
     if (!g_netServer && !g_netClient && G_CanUseLocalSavePlayerCount(ud.multimode))
     {

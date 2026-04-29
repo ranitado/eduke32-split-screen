@@ -6787,6 +6787,7 @@ static int G_EndOfLevel(void)
             }
 
             CONFIG_SetSplitScreenLevelProgress(g_addonNum, ud.volume_number, ud.level_number, secretRooms, maxSecretRooms, p.player_par);
+            M_RecordReplayCurrentLevelCompleted();
         }
 
         if ((VM_OnEventWithReturn(EVENT_ENDLEVELSCREEN, p.i, myconnectindex, 0)) == 0 && ud.display_bonus_screen == 1)
