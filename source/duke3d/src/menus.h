@@ -502,6 +502,9 @@ void Menu_Init(void);
 void Menu_Open(uint8_t playerID);
 void Menu_Close(uint8_t playerID);
 void Menu_ResumeNewGameAfterAddonRelaunch(int32_t gameMode, int32_t playerCount, int32_t volumeNum, int32_t levelNum, int32_t skillNum);
+#if defined(_WIN32) && defined(SPLITSCREEN_MOD_HACKS)
+int32_t Menu_RunSplitScreenUpdaterMode(int argc, char const* const* argv);
+#endif
 void M_DisplayMenus(void);
 
 extern MenuFont_t MF_Redfont, MF_Bluefont, MF_Minifont;

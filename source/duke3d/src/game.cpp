@@ -96,6 +96,8 @@ static void G_LoadSplitScreenAssetDefinitions(void)
     if (appdir)
     {
         addsearchpath(appdir);
+        G_AddSplitScreenAssetSearchPath(appdir, "assets/hud");
+        G_AddSplitScreenAssetSearchPath(appdir, "assets/logo");
         G_AddSplitScreenAssetSearchPath(appdir, "levelthumbs");
         G_AddSplitScreenAssetSearchPath(appdir, "custom/hud");
     }
@@ -7078,6 +7080,10 @@ static const char* dukeVerbosityCallback(loguru::Verbosity verbosity)
 int app_main(int argc, char const* const* argv)
 {
 #ifdef _WIN32
+#ifdef SPLITSCREEN_MOD_HACKS
+    if (Menu_RunSplitScreenUpdaterMode(argc, argv))
+        return 0;
+#endif
 #ifndef DEBUGGINGAIDS
     if (!G_CheckCmdSwitch(argc, argv, "-noinstancechecking") && !windowsCheckAlreadyRunning())
     {

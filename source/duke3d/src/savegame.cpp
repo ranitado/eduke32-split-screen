@@ -145,13 +145,33 @@ uint16_t g_nummenusaves;
 static menusave_t * g_internalsaves;
 static uint16_t g_numinternalsaves;
 
-static void ReadSaveGameHeaders_CACHE1D(BUILDVFS_FIND_REC *f)
+#ifdef SPLITSCREEN_MOD_HACKS
+static char const s_splitScreenSaveDir[] = "saves";
+static char const s_splitScreenSaveDirPrefix[] = "saves/";
+
+static void G_EnsureSplitScreenSaveDir(void)
+{
+    char dir[BMAX_PATH];
+    if (G_ModDirSnprintfLite(dir, ARRAY_SIZE(dir), s_splitScreenSaveDir) < ARRAY_SSIZE(dir)-1)
+        buildvfs_mkdir(dir, 0755);
+}
+#endif
+
+static void ReadSaveGameHeaders_CACHE1D(BUILDVFS_FIND_REC *f, char const * const pathPrefix = nullptr)
 {
     savehead_t h;
 
     for (; f != nullptr; f = f->next)
     {
+        char prefixedName[BMAX_PATH];
         char const * fn = f->name;
+
+        if (pathPrefix != nullptr && pathPrefix[0] != '\0')
+        {
+            Bsnprintf(prefixedName, ARRAY_SIZE(prefixedName), "%s%s", pathPrefix, f->name);
+            fn = prefixedName;
+        }
+
         buildvfs_kfd fil = kopen4loadfrommod(fn, 0);
         if (fil == buildvfs_kfd_invalid)
             continue;
@@ -214,9 +234,16 @@ static void ReadSaveGameHeaders_Internal(void)
     static char const DefaultPath[] = "/", SavePattern[] = "*.esv";
 
     BUILDVFS_FIND_REC *findfiles_default = klistpath(DefaultPath, SavePattern, BUILDVFS_FIND_FILE);
+#ifdef SPLITSCREEN_MOD_HACKS
+    BUILDVFS_FIND_REC *findfiles_saves = klistpath(s_splitScreenSaveDir, SavePattern, BUILDVFS_FIND_FILE);
+#endif
 
     // potentially overallocating but programmatically simple
-    int const numfiles = countcache1dfind(findfiles_default);
+    int const numfiles = countcache1dfind(findfiles_default)
+#ifdef SPLITSCREEN_MOD_HACKS
+        + countcache1dfind(findfiles_saves)
+#endif
+        ;
     size_t const internalsavesize = sizeof(menusave_t) * numfiles;
 
     g_internalsaves = (menusave_t *)Xrealloc(g_internalsaves, internalsavesize);
@@ -227,6 +254,10 @@ static void ReadSaveGameHeaders_Internal(void)
     g_numinternalsaves = 0;
     ReadSaveGameHeaders_CACHE1D(findfiles_default);
     klistfree(findfiles_default);
+#ifdef SPLITSCREEN_MOD_HACKS
+    ReadSaveGameHeaders_CACHE1D(findfiles_saves, s_splitScreenSaveDirPrefix);
+    klistfree(findfiles_saves);
+#endif
 
     g_nummenusaves = 0;
     for (int x = g_numinternalsaves-1; x >= 0; --x)
@@ -968,7 +999,12 @@ int32_t G_SavePlayer(savebrief_t & sv, bool isAutoSave)
     }
     else
     {
+#ifdef SPLITSCREEN_MOD_HACKS
+        G_EnsureSplitScreenSaveDir();
+        static char const SaveName[] = "saves/save0000.esv";
+#else
         static char const SaveName[] = "save0000.esv";
+#endif
         int const len = G_ModDirSnprintfLite(fn, ARRAY_SIZE(fn), SaveName);
         if (len >= ARRAY_SSIZE(fn)-1)
         {

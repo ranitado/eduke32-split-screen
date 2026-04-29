@@ -1,12 +1,12 @@
 tilefromtexture 2544 {
-    file "rpggunwide_template_320x128.png"
+    file "assets/hud/rpggunwide_template_320x128.png"
     alphacut 128
     xoffset -95
     yoffset -83
 }
 
 tilefromtexture 5121 {
-    file "rpggunwide_template_320x128.png"
+    file "assets/hud/rpggunwide_template_320x128.png"
     alphacut 128
     xoffset -95
     yoffset -83

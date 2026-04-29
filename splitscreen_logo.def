@@ -1,9 +1,9 @@
 tilefromtexture 2502 {
-    file "atomic_intro_splitscreen_template.png"
+    file "assets/logo/atomic_intro_splitscreen_template.png"
     alphacut 128
 }
 
 tilefromtexture 2503 {
-    file "atomic_splitscreen_template.png"
+    file "assets/logo/atomic_splitscreen_template.png"
     alphacut 128
 }

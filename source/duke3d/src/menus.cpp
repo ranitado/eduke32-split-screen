@@ -33,6 +33,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "grpscan.h"
 #include "in_android.h"
 #include "input.h"
+#include "kplib.h"
 #include "config.h"
 #include "osdcmds.h"
 #include "savegame.h"
@@ -450,6 +451,7 @@ static MenuEntry_t *MEL_MAIN[] = {
 };
 
 static MenuEntry_t *MEL_MAIN_INGAME[] = {
+    &ME_MAIN_LEVELS,
 #ifdef EDUKE32_RETAIL_MENU
     &ME_MAIN_RESUMEGAME,
 #else
@@ -457,7 +459,6 @@ static MenuEntry_t *MEL_MAIN_INGAME[] = {
 #endif
     &ME_MAIN_SAVEGAME,
     &ME_MAIN_LOADGAME,
-    &ME_MAIN_LEVELS,
     &ME_MAIN_OPTIONS,
     &ME_MAIN_HELP,
     &ME_MAIN_QUITTOTITLE,
@@ -555,6 +556,10 @@ static int32_t g_replayLevelMaxSecrets[MAXVOLUMES * MAXLEVELS];
 static int32_t g_replayLevelBestTimes[MAXVOLUMES * MAXLEVELS];
 static int32_t g_replayLevelCount = 0;
 static int32_t g_replayLevelSelectedIndex = 0;
+static int32_t g_replayLevelSecretTotalCacheAddon = INT32_MIN;
+static int32_t g_replayLevelSecretTotalCache[MAXVOLUMES * MAXLEVELS];
+static int32_t g_replayLevelReachedAddon = INT32_MIN;
+static int32_t g_replayLevelReached[MAXVOLUMES];
 
 static MenuLink_t MEO_NEWGAMECUSTOM_TEMPLATE = { MENU_NEWGAMECUSTOMSUB, MA_Advance, };
 static MenuLink_t MEO_NEWGAMECUSTOM[MAXMENUGAMEPLAYENTRIES];
@@ -2475,6 +2480,331 @@ static int32_t Menu_DownloadFileUrlMon(char const * const url, char const * cons
     return SUCCEEDED(result);
 }
 
+static int32_t Menu_DownloadFileWinInet(char const * const url, char const * const destination)
+{
+    HMODULE const wininet = LoadLibraryA("wininet.dll");
+    if (wininet == nullptr)
+        return 0;
+
+    typedef void * HINTERNET_LOCAL;
+    typedef HINTERNET_LOCAL (WINAPI *InternetOpenAFunc)(LPCSTR, DWORD, LPCSTR, LPCSTR, DWORD);
+    typedef HINTERNET_LOCAL (WINAPI *InternetOpenUrlAFunc)(HINTERNET_LOCAL, LPCSTR, LPCSTR, DWORD, DWORD, DWORD_PTR);
+    typedef BOOL (WINAPI *InternetReadFileFunc)(HINTERNET_LOCAL, LPVOID, DWORD, LPDWORD);
+    typedef BOOL (WINAPI *InternetCloseHandleFunc)(HINTERNET_LOCAL);
+
+    auto const internetOpen = (InternetOpenAFunc)GetProcAddress(wininet, "InternetOpenA");
+    auto const internetOpenUrl = (InternetOpenUrlAFunc)GetProcAddress(wininet, "InternetOpenUrlA");
+    auto const internetReadFile = (InternetReadFileFunc)GetProcAddress(wininet, "InternetReadFile");
+    auto const internetCloseHandle = (InternetCloseHandleFunc)GetProcAddress(wininet, "InternetCloseHandle");
+
+    if (internetOpen == nullptr || internetOpenUrl == nullptr || internetReadFile == nullptr || internetCloseHandle == nullptr)
+    {
+        FreeLibrary(wininet);
+        return 0;
+    }
+
+    FILE * const fp = fopen(destination, "wb");
+    if (fp == nullptr)
+    {
+        FreeLibrary(wininet);
+        return 0;
+    }
+
+    DWORD constexpr INTERNET_OPEN_TYPE_PRECONFIG_LOCAL = 0;
+    DWORD constexpr INTERNET_FLAG_RELOAD_LOCAL = 0x80000000u;
+    DWORD constexpr INTERNET_FLAG_NO_CACHE_WRITE_LOCAL = 0x04000000u;
+    DWORD constexpr INTERNET_FLAG_SECURE_LOCAL = 0x00800000u;
+
+    HINTERNET_LOCAL const session = internetOpen("DukeSplitScreen", INTERNET_OPEN_TYPE_PRECONFIG_LOCAL, nullptr, nullptr, 0);
+    if (session == nullptr)
+    {
+        fclose(fp);
+        FreeLibrary(wininet);
+        return 0;
+    }
+
+    HINTERNET_LOCAL const request = internetOpenUrl(session, url, nullptr, 0,
+                                                    INTERNET_FLAG_RELOAD_LOCAL | INTERNET_FLAG_NO_CACHE_WRITE_LOCAL | INTERNET_FLAG_SECURE_LOCAL, 0);
+    if (request == nullptr)
+    {
+        internetCloseHandle(session);
+        fclose(fp);
+        FreeLibrary(wininet);
+        return 0;
+    }
+
+    char buffer[32768];
+    BOOL ok = TRUE;
+
+    for (;;)
+    {
+        DWORD bytesRead = 0;
+        ok = internetReadFile(request, buffer, ARRAY_SIZE(buffer), &bytesRead);
+        if (!ok || bytesRead == 0)
+            break;
+
+        if (fwrite(buffer, 1, bytesRead, fp) != bytesRead)
+        {
+            ok = FALSE;
+            break;
+        }
+    }
+
+    internetCloseHandle(request);
+    internetCloseHandle(session);
+    fclose(fp);
+    FreeLibrary(wininet);
+
+    return ok;
+}
+
+static int32_t Menu_DownloadUpdatePackage(char const * const url, char const * const destination)
+{
+    remove(destination);
+    return Menu_DownloadFileWinInet(url, destination) || Menu_DownloadFileUrlMon(url, destination);
+}
+
+static void Menu_WindowsCommandLineQuote(char * const out, size_t const outSize, char const * const in)
+{
+    size_t pos = 0;
+
+    if (outSize == 0)
+        return;
+
+    out[pos++] = '"';
+
+    for (char const *p = in; *p != '\0' && pos + 2 < outSize; ++p)
+    {
+        if (*p == '"' || *p == '\\')
+            out[pos++] = '\\';
+
+        out[pos++] = *p;
+    }
+
+    if (pos + 1 < outSize)
+        out[pos++] = '"';
+
+    out[pos] = '\0';
+}
+
+static void Menu_CreateParentDirectories(char const * const filename)
+{
+    char path[BMAX_PATH];
+    Bstrncpyz(path, filename, ARRAY_SIZE(path));
+
+    for (char *p = path; *p != '\0'; ++p)
+    {
+        if (*p != '/' && *p != '\\')
+            continue;
+
+        char const saved = *p;
+        *p = '\0';
+
+        if (path[0] != '\0' && !(path[1] == ':' && path[2] == '\0'))
+            CreateDirectoryA(path, nullptr);
+
+        *p = saved;
+    }
+}
+
+static int32_t Menu_UpdatePathHasSuffix(char const * const path, char const * const suffix)
+{
+    size_t const pathLen = Bstrlen(path);
+    size_t const suffixLen = Bstrlen(suffix);
+
+    return pathLen >= suffixLen && Bstrcasecmp(path + pathLen - suffixLen, suffix) == 0;
+}
+
+static int32_t Menu_ShouldSkipUpdateEntry(char const * const rel)
+{
+    if (rel[0] == '\0' || rel[0] == '/' || rel[0] == '\\' || Bstrchr(rel, ':') != nullptr)
+        return 1;
+
+    if (Bstrstr(rel, "../") != nullptr || Bstrstr(rel, "/../") != nullptr || Bstrstr(rel, "..\\") != nullptr || Bstrstr(rel, "\\..\\") != nullptr)
+        return 1;
+
+    if (Bstrncasecmp(rel, "saves/", 6) == 0 || Bstrncasecmp(rel, "save/", 5) == 0 || Bstrncasecmp(rel, "screenshots/", 12) == 0)
+        return 1;
+
+    return Menu_UpdatePathHasSuffix(rel, ".grp") || Menu_UpdatePathHasSuffix(rel, ".cfg") ||
+           Menu_UpdatePathHasSuffix(rel, ".esv") || Menu_UpdatePathHasSuffix(rel, ".esv.addon") ||
+           Menu_UpdatePathHasSuffix(rel, ".sav") || Menu_UpdatePathHasSuffix(rel, ".log");
+}
+
+static int32_t Menu_NormalizeUpdateEntryName(char * const out, size_t const outSize, char const * raw)
+{
+    if (outSize == 0)
+        return 0;
+
+    if (raw[0] == '|')
+        ++raw;
+
+    size_t pos = 0;
+    for (; *raw != '\0' && pos + 1 < outSize; ++raw)
+        out[pos++] = (*raw == '\\') ? '/' : *raw;
+
+    out[pos] = '\0';
+
+    return !Menu_ShouldSkipUpdateEntry(out);
+}
+
+static int32_t Menu_ExtractUpdateZip(char const * const zipPath, char const * const rootPath)
+{
+    if (kzaddstack(zipPath) < 0)
+        return 0;
+
+    char found[BMAX_PATH];
+    char rel[BMAX_PATH];
+    char dest[BMAX_PATH];
+    char buffer[32768];
+    int32_t extracted = 0;
+
+    Bstrcpy(found, "*");
+    kzfindfilestart(found);
+
+    while (kzfindfile(found))
+    {
+        if (found[0] != '|')
+            continue;
+
+        if (!Menu_NormalizeUpdateEntryName(rel, ARRAY_SIZE(rel), found))
+            continue;
+
+        size_t const relLen = Bstrlen(rel);
+        if (relLen == 0 || rel[relLen - 1] == '/')
+            continue;
+
+        if (!kzopen(found))
+            continue;
+
+        Bsnprintf(dest, ARRAY_SIZE(dest), "%s/%s", rootPath, rel);
+        Bcorrectfilename(dest, 0);
+        Menu_CreateParentDirectories(dest);
+
+        FILE * const fp = fopen(dest, "wb");
+        if (fp == nullptr)
+        {
+            kzclose();
+            kzuninit();
+            return 0;
+        }
+
+        int32_t remaining = kzfilelength();
+        while (remaining > 0)
+        {
+            int32_t const chunk = min<int32_t>(remaining, ARRAY_SIZE(buffer));
+            if (kzread(buffer, chunk) != chunk || fwrite(buffer, 1, chunk, fp) != (size_t)chunk)
+            {
+                fclose(fp);
+                kzclose();
+                kzuninit();
+                return 0;
+            }
+
+            remaining -= chunk;
+        }
+
+        fclose(fp);
+        kzclose();
+        ++extracted;
+    }
+
+    kzuninit();
+    return extracted > 0;
+}
+
+static void Menu_AttachUpdaterConsole(void)
+{
+    AllocConsole();
+    FILE *dummy;
+    freopen_s(&dummy, "CONOUT$", "w", stdout);
+    freopen_s(&dummy, "CONOUT$", "w", stderr);
+    freopen_s(&dummy, "CONIN$", "r", stdin);
+    SetConsoleTitleA("Duke Split Screen Updater");
+}
+
+static int32_t Menu_StartUpdatedGame(char const * const exePath, char const * const rootPath)
+{
+    char exeQuoted[BMAX_PATH * 2];
+    Menu_WindowsCommandLineQuote(exeQuoted, sizeof(exeQuoted), exePath);
+
+    char commandLine[BMAX_PATH * 2 + 64];
+    Bsnprintf(commandLine, sizeof(commandLine), "%s -noinstancechecking", exeQuoted);
+
+    STARTUPINFOA startupInfo {};
+    PROCESS_INFORMATION processInfo {};
+    startupInfo.cb = sizeof(startupInfo);
+
+    if (!CreateProcessA(nullptr, commandLine, nullptr, nullptr, FALSE, 0, nullptr, rootPath, &startupInfo, &processInfo))
+        return 0;
+
+    CloseHandle(processInfo.hThread);
+    CloseHandle(processInfo.hProcess);
+    return 1;
+}
+
+int32_t Menu_RunSplitScreenUpdaterMode(int argc, char const* const* argv)
+{
+    if (argc < 7 || Bstrcmp(argv[1], "-splitscreen-updater") != 0)
+        return 0;
+
+    DWORD const pidToWait = (DWORD)Bstrtoul(argv[2], nullptr, 10);
+    char const * const rootPath = argv[3];
+    char const * const exePath = argv[4];
+    char const * const downloadUrl = argv[5];
+    char const * const version = argv[6];
+
+    Menu_AttachUpdaterConsole();
+
+    printf("\nDuke Nukem 3D Split-Screen updater\n");
+    printf("Updating Duke Split Screen to %s\n\n", version);
+    printf("Please wait. Do not close this window.\n\n");
+
+    printf("[1/5] Waiting for the game to close...\n");
+    HANDLE const process = OpenProcess(SYNCHRONIZE, FALSE, pidToWait);
+    if (process != nullptr)
+    {
+        WaitForSingleObject(process, 30000);
+        CloseHandle(process);
+    }
+    Sleep(500);
+
+    char tempPath[BMAX_PATH];
+    if (!GetTempPathA(ARRAY_SIZE(tempPath), tempPath))
+        goto fail;
+
+    char zipPath[BMAX_PATH];
+    Bsnprintf(zipPath, sizeof(zipPath), "%seduke32-split-screen-update.zip", tempPath);
+
+    printf("[2/5] Preparing temporary files...\n");
+    remove(zipPath);
+
+    printf("[3/5] Downloading update package...\n");
+    if (!Menu_DownloadUpdatePackage(downloadUrl, zipPath))
+        goto fail;
+
+    printf("[4/5] Installing files...\n");
+    if (!Menu_ExtractUpdateZip(zipPath, rootPath))
+        goto fail;
+
+    printf("[5/5] Restarting Duke Split Screen...\n");
+    remove(zipPath);
+
+    if (!Menu_StartUpdatedGame(exePath, rootPath))
+        goto fail;
+
+    printf("\nUpdate installed.\n");
+    Sleep(1000);
+    return 1;
+
+fail:
+    printf("\nUpdate failed.\n");
+    printf("The game folder was left untouched where possible.\n");
+    printf("Press Enter to close this window.\n");
+    getchar();
+    return 1;
+}
+
 static int32_t Menu_DownloadTextWinInet(char const * const url, char * const out, size_t const outSize)
 {
     if (outSize == 0)
@@ -2640,79 +2970,36 @@ static int32_t Menu_LaunchSplitScreenUpdater(char const * const downloadUrl)
     if (!GetTempPathA(ARRAY_SIZE(tempPath), tempPath))
         return 0;
 
-    char scriptPath[BMAX_PATH];
-    Bsnprintf(scriptPath, sizeof(scriptPath), "%seduke32-split-screen-updater-%lu.ps1", tempPath, (unsigned long)GetCurrentProcessId());
+    char updaterPath[BMAX_PATH];
+    Bsnprintf(updaterPath, sizeof(updaterPath), "%seduke32-split-screen-updater-%lu.exe", tempPath, (unsigned long)GetCurrentProcessId());
 
-    char rootPathPS[BMAX_PATH * 2], exePathPS[BMAX_PATH * 2], downloadUrlPS[2048], updateVersionPS[256], scriptPathPS[BMAX_PATH * 2];
-    Menu_PowerShellQuote(rootPathPS, sizeof(rootPathPS), rootPath);
-    Menu_PowerShellQuote(exePathPS, sizeof(exePathPS), exePath);
-    Menu_PowerShellQuote(downloadUrlPS, sizeof(downloadUrlPS), downloadUrl);
-    Menu_PowerShellQuote(updateVersionPS, sizeof(updateVersionPS), g_updateLatestVersion[0] != '\0' ? g_updateLatestVersion : "latest version");
-    Menu_PowerShellQuote(scriptPathPS, sizeof(scriptPathPS), scriptPath);
-
-    char script[12288];
-    Bsnprintf(script, sizeof(script),
-        "$ErrorActionPreference='Stop'\r\n"
-        "try {\r\n"
-        "$Host.UI.RawUI.WindowTitle='Duke Split Screen Updater'\r\n"
-        "Clear-Host\r\n"
-        "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12\r\n"
-        "$pidToWait=%lu\r\n"
-        "$root=%s\r\n"
-        "$exe=%s\r\n"
-        "$url=%s\r\n"
-        "$version=%s\r\n"
-        "Write-Host ''\r\n"
-        "Write-Host 'Duke Nukem 3D Split-Screen updater' -ForegroundColor Cyan\r\n"
-        "Write-Host ('Updating Duke Split Screen to ' + $version) -ForegroundColor Cyan\r\n"
-        "Write-Host ''\r\n"
-        "Write-Host 'Please wait. Do not close this window.' -ForegroundColor Yellow\r\n"
-        "Write-Host ''\r\n"
-        "Write-Host '[1/5] Waiting for the game to close...'\r\n"
-        "Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue\r\n"
-        "Start-Sleep -Milliseconds 500\r\n"
-        "$zip=Join-Path $env:TEMP 'eduke32-split-screen-update.zip'\r\n"
-        "$tmp=Join-Path $env:TEMP ('eduke32-split-screen-update-'+[guid]::NewGuid().ToString())\r\n"
-        "Write-Host '[2/5] Preparing temporary files...'\r\n"
-        "New-Item -ItemType Directory -Path $tmp -Force|Out-Null\r\n"
-        "Write-Host '[3/5] Downloading update package...'\r\n"
-        "Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zip\r\n"
-        "Write-Host '[4/5] Extracting update package...'\r\n"
-        "Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force\r\n"
-        "$src=$tmp\r\n"
-        "$dirs=@(Get-ChildItem -LiteralPath $tmp -Directory)\r\n"
-        "if($dirs.Count -eq 1 -and ((Test-Path (Join-Path $dirs[0].FullName 'eduke32-split-screen.exe')) -or (Test-Path (Join-Path $dirs[0].FullName 'DukeSplitScreen.exe')))){$src=$dirs[0].FullName}\r\n"
-        "Write-Host '[5/5] Installing files...'\r\n"
-        "Get-ChildItem -LiteralPath $src -Recurse -File|ForEach-Object{\r\n"
-        "  $rel=$_.FullName.Substring($src.Length).TrimStart('\\','/')\r\n"
-        "  if(($rel -notmatch '^(saves|save|screenshots)[\\\\/]') -and ($_.Name -notlike '*.grp') -and ($_.Name -notlike '*.cfg') -and ($_.Name -notlike '*.sav')){\r\n"
-        "    $dest=Join-Path $root $rel\r\n"
-        "    New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force|Out-Null\r\n"
-        "    Copy-Item -LiteralPath $_.FullName -Destination $dest -Force\r\n"
-        "  }\r\n"
-        "}\r\n"
-        "Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue\r\n"
-        "Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue\r\n"
-        "Write-Host ''\r\n"
-        "Write-Host 'Update installed. Restarting Duke Split Screen...' -ForegroundColor Green\r\n"
-        "Start-Sleep -Seconds 1\r\n"
-        "Start-Process -FilePath $exe -WorkingDirectory $root\r\n"
-        "Remove-Item -LiteralPath %s -Force -ErrorAction SilentlyContinue\r\n"
-        "} catch {\r\n"
-        "  Write-Host ''\r\n"
-        "  Write-Host 'Update failed.' -ForegroundColor Red\r\n"
-        "  Write-Host $_.Exception.Message -ForegroundColor Red\r\n"
-        "  Write-Host ''\r\n"
-        "  Write-Host 'Press Enter to close this window.' -ForegroundColor Yellow\r\n"
-        "  Read-Host | Out-Null\r\n"
-        "  exit 1\r\n"
-        "}\r\n",
-        (unsigned long)GetCurrentProcessId(), rootPathPS, exePathPS, downloadUrlPS, updateVersionPS, scriptPathPS);
-
-    if (!Menu_WriteTextFile(scriptPath, script))
+    if (!CopyFileA(exePath, updaterPath, FALSE))
         return 0;
 
-    return Menu_RunPowerShellScript(scriptPath, 0, 1);
+    char updaterQuoted[BMAX_PATH * 2], rootQuoted[BMAX_PATH * 2], exeQuoted[BMAX_PATH * 2], urlQuoted[2048], versionQuoted[256];
+    Menu_WindowsCommandLineQuote(updaterQuoted, sizeof(updaterQuoted), updaterPath);
+    Menu_WindowsCommandLineQuote(rootQuoted, sizeof(rootQuoted), rootPath);
+    Menu_WindowsCommandLineQuote(exeQuoted, sizeof(exeQuoted), exePath);
+    Menu_WindowsCommandLineQuote(urlQuoted, sizeof(urlQuoted), downloadUrl);
+    Menu_WindowsCommandLineQuote(versionQuoted, sizeof(versionQuoted), g_updateLatestVersion[0] != '\0' ? g_updateLatestVersion : "latest version");
+
+    char commandLine[BMAX_PATH * 6];
+    Bsnprintf(commandLine, sizeof(commandLine), "%s -splitscreen-updater %lu %s %s %s %s",
+              updaterQuoted, (unsigned long)GetCurrentProcessId(), rootQuoted, exeQuoted, urlQuoted, versionQuoted);
+
+    STARTUPINFOA startupInfo {};
+    PROCESS_INFORMATION processInfo {};
+    startupInfo.cb = sizeof(startupInfo);
+
+    if (!CreateProcessA(updaterPath, commandLine, nullptr, nullptr, FALSE, 0, nullptr, rootPath, &startupInfo, &processInfo))
+    {
+        DeleteFileA(updaterPath);
+        return 0;
+    }
+
+    CloseHandle(processInfo.hThread);
+    CloseHandle(processInfo.hProcess);
+    return 1;
 }
 
 static void Menu_FinishSplitScreenUpdateCheck(int32_t const ok)
@@ -5666,6 +5953,114 @@ static void Menu_GetCurrentCampaignSecrets(int32_t * const secrets, int32_t * co
         *maxSecrets = maxFound;
 }
 
+static void Menu_ResetReplayLevelSecretTotalCacheIfNeeded(void)
+{
+    if (g_replayLevelSecretTotalCacheAddon == g_addonNum)
+        return;
+
+    g_replayLevelSecretTotalCacheAddon = g_addonNum;
+    for (auto &total : g_replayLevelSecretTotalCache)
+        total = -2;
+}
+
+static void Menu_ResetReplayLevelReached(void)
+{
+    g_replayLevelReachedAddon = g_addonNum;
+    for (auto &level : g_replayLevelReached)
+        level = -1;
+}
+
+static void Menu_ResetReplayLevelReachedIfNeeded(void)
+{
+    if (g_replayLevelReachedAddon != g_addonNum)
+        Menu_ResetReplayLevelReached();
+}
+
+static void Menu_RecordReplayLevelReached(int32_t const volumeIndex, int32_t const levelIndex)
+{
+    if ((unsigned)volumeIndex >= MAXVOLUMES || (unsigned)levelIndex >= MAXLEVELS)
+        return;
+
+    Menu_ResetReplayLevelReachedIfNeeded();
+    g_replayLevelReached[volumeIndex] = max<int32_t>(g_replayLevelReached[volumeIndex], levelIndex);
+}
+
+static int32_t Menu_GetReplayLevelReached(int32_t const volumeIndex)
+{
+    if ((unsigned)volumeIndex >= MAXVOLUMES)
+        return -1;
+
+    Menu_ResetReplayLevelReachedIfNeeded();
+    return g_replayLevelReached[volumeIndex];
+}
+
+static int32_t Menu_CountMapSecretSectors(char const * const filename)
+{
+    if (filename == nullptr || filename[0] == '\0')
+        return -1;
+
+    buildvfs_kfd fil = kopen4loadfrommod(filename, 0);
+    if (fil == buildvfs_kfd_invalid)
+        return -1;
+
+    int32_t secretCount = -1;
+    int32_t mapVersion = 0;
+
+    do
+    {
+        if (kread_and_test(fil, &mapVersion, 4))
+            break;
+
+        mapVersion = B_LITTLE32(mapVersion);
+        if (mapVersion != 7)
+            break;
+
+        if (klseek_and_test(fil, 4 + 4 + 4 + 2 + 2, SEEK_CUR))
+            break;
+
+        int16_t numMapSectors = 0;
+        if (kread_and_test(fil, &numMapSectors, sizeof(numMapSectors)))
+            break;
+
+        numMapSectors = B_LITTLE16(numMapSectors);
+        if ((unsigned)numMapSectors >= MAXSECTORS + 1)
+            break;
+
+        secretCount = 0;
+        for (int32_t sectorIndex = 0; sectorIndex < numMapSectors; ++sectorIndex)
+        {
+            sectortypev7 mapSector;
+            if (kread_and_test(fil, &mapSector, sizeof(mapSector)))
+            {
+                secretCount = -1;
+                break;
+            }
+
+            if (B_LITTLE16(mapSector.lotag) == 32767)
+                ++secretCount;
+        }
+    } while (0);
+
+    kclose(fil);
+    return secretCount;
+}
+
+static int32_t Menu_GetReplayLevelMapSecretTotal(int32_t const volumeIndex, int32_t const levelIndex)
+{
+    if ((unsigned)volumeIndex >= MAXVOLUMES || (unsigned)levelIndex >= MAXLEVELS)
+        return -1;
+
+    Menu_ResetReplayLevelSecretTotalCacheIfNeeded();
+
+    int32_t const cacheIndex = volumeIndex * MAXLEVELS + levelIndex;
+    if (g_replayLevelSecretTotalCache[cacheIndex] != -2)
+        return g_replayLevelSecretTotalCache[cacheIndex];
+
+    auto const &mapInfo = g_mapInfo[cacheIndex];
+    g_replayLevelSecretTotalCache[cacheIndex] = Menu_CountMapSecretSectors(mapInfo.filename);
+    return g_replayLevelSecretTotalCache[cacheIndex];
+}
+
 static int32_t Menu_CanUseReplayLevels(void)
 {
     auto const ps = g_player[myconnectindex].ps;
@@ -5680,6 +6075,7 @@ static void Menu_UpdateCurrentReplayLevelProgress(void)
     int32_t secrets = 0, maxSecrets = 0;
     Menu_GetCurrentCampaignSecrets(&secrets, &maxSecrets);
     CONFIG_SetSplitScreenLevelProgress(g_addonNum, ud.volume_number, ud.level_number, secrets, maxSecrets, 0);
+    Menu_RecordReplayLevelReached(ud.volume_number, ud.level_number);
 }
 
 static int32_t Menu_IsReplayLevelCurrent(int32_t const entryIndex)
@@ -5716,20 +6112,31 @@ static void Menu_PopulateReplayLevelMenu(void)
 
     for (int32_t volumeIndex = 0; volumeIndex < g_volumeCnt && entryCount < ARRAY_SSIZE(g_replayLevelNames); ++volumeIndex)
     {
+        int32_t maxReachedLevel = Menu_GetReplayLevelReached(volumeIndex);
+        if (volumeIndex == ud.volume_number)
+            maxReachedLevel = max<int32_t>(maxReachedLevel, ud.level_number);
+
         for (int32_t levelIndex = 0; levelIndex < MAXLEVELS && entryCount < ARRAY_SSIZE(g_replayLevelNames); ++levelIndex)
         {
             auto const &mapInfo = g_mapInfo[volumeIndex * MAXLEVELS + levelIndex];
             if (mapInfo.filename == nullptr || mapInfo.name == nullptr || mapInfo.name[0] == '\0')
                 continue;
 
-            int32_t played = 0, secrets = 0, maxSecrets = 0, bestTime = 0;
-            CONFIG_GetSplitScreenLevelProgress(g_addonNum, volumeIndex, levelIndex, &played, &secrets, &maxSecrets, &bestTime);
-            int32_t const reachedInCurrentEpisode = volumeIndex == ud.volume_number && levelIndex <= ud.level_number;
-            if (!played && !reachedInCurrentEpisode)
+            int32_t secrets = 0, maxSecrets = 0, bestTime = 0;
+            CONFIG_GetSplitScreenLevelProgress(g_addonNum, volumeIndex, levelIndex, nullptr, &secrets, &maxSecrets, &bestTime);
+            int32_t const reachedInEpisode = levelIndex <= maxReachedLevel;
+            if (!reachedInEpisode)
                 continue;
 
-            if (volumeIndex > ud.volume_number || (volumeIndex == ud.volume_number && levelIndex > ud.level_number))
+            if (volumeIndex > ud.volume_number && maxReachedLevel < 0)
                 continue;
+
+            if (maxSecrets <= 0)
+            {
+                int32_t const mapSecretTotal = Menu_GetReplayLevelMapSecretTotal(volumeIndex, levelIndex);
+                if (mapSecretTotal >= 0)
+                    maxSecrets = mapSecretTotal;
+            }
 
             Bsnprintf(g_replayLevelNames[entryCount], sizeof(g_replayLevelNames[entryCount]), "%s", localeLookup(mapInfo.name));
 
@@ -6260,6 +6667,7 @@ static void Menu_StartConfiguredGame(int32_t const skillIndex, int32_t const ski
     ud.m_monsters_off = ud.monsters_off = 0;
     ud.multimode = Menu_GetCurrentLocalPlayerCount();
     Menu_AssignStartingGamepadToPlayer1();
+    Menu_ResetReplayLevelReached();
     G_NewGame_EnterLevel();
 }
 
@@ -8449,7 +8857,7 @@ void Menu_Close(uint8_t playerID)
         gm &= ~MODE_MENU;
         mouseLockToWindow(1);
 
-        if ((!g_netServer && ud.multimode < 2) && ud.recstat != 2)
+        if ((!g_netServer && (ud.multimode < 2 || G_HaveSplitScreen())) && ud.recstat != 2)
         {
             ready2send = 1;
             totalclock = ototalclock;
