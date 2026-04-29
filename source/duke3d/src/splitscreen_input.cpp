@@ -1347,12 +1347,8 @@ static int G_GetJoinPlayerForGamepadIndex(int const gamepadIndex)
 static int G_GetJoinPlayerForKeyboardMouse(void)
 {
     int const assignedPlayer = G_GetSplitScreenKeyboardMousePlayer();
-    if (assignedPlayer >= 0)
+    if (assignedPlayer > 0)
         return assignedPlayer;
-
-    for (int playerNum = 1; playerNum < MAX_LOCAL_PLAYERS; ++playerNum)
-        if (!G_IsSplitScreenPlayerActive(playerNum))
-            return playerNum;
 
     return -1;
 }
@@ -1366,16 +1362,9 @@ static void G_UpdateSplitScreenJoinInputs(void)
 
     if (canJoin && keyboardJoinPressed)
     {
-        int const assignedPlayer = G_GetSplitScreenKeyboardMousePlayer();
         int const playerNum = G_GetJoinPlayerForKeyboardMouse();
         if (playerNum >= 0 && (unsigned)playerNum < MAX_LOCAL_PLAYERS && !G_IsSplitScreenPlayerActive(playerNum))
         {
-            if (assignedPlayer < 0)
-            {
-                ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
-                CONFIG_WriteSetup(0);
-            }
-
             if (G_AddSplitScreenPlayer(playerNum) >= 0)
             {
                 G_CloseSplitScreenConfigMenu(playerNum);
