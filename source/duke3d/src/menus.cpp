@@ -50,7 +50,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 EDUKE32_NORETURN void app_exit(int returnCode);
 
-#define SPLITSCREEN_MOD_VERSION "v0.5"
+#define SPLITSCREEN_MOD_VERSION "v0.6"
 
 #ifndef __ANDROID__
 droidinput_t droidinput;
@@ -1763,6 +1763,7 @@ static MenuOption_t MEO_PLAYER_ALWAYS_RUN = MAKE_MENUOPTION( &MF_Bluefont, &MEOS
 static MenuEntry_t ME_PLAYER_ALWAYS_RUN = MAKE_MENUENTRY( "Auto run", &MF_Bluefont, &MEF_PlayerNarrow, &MEO_PLAYER_ALWAYS_RUN, Option );
 static MenuOption_t MEO_PLAYER_EQUIP_PICKUPS = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_GAMESETUP_WEAPSWITCH_PICKUP, NULL );
 static MenuEntry_t ME_PLAYER_EQUIP_PICKUPS = MAKE_MENUENTRY( "Equip pickups", &MF_Bluefont, &MEF_PlayerNarrow, &MEO_PLAYER_EQUIP_PICKUPS, Option );
+static MenuEntry_t ME_PLAYER_DISCONNECT = MAKE_MENUENTRY( "Disconnect player", &MF_Bluefont, &MEF_PlayerNarrow, &MEO_NULL, Link );
 
 static MenuEntry_t *MEL_PLAYER[] = {
     &ME_PLAYER_SETUP_PLAYER,
@@ -1778,6 +1779,8 @@ static MenuEntry_t *MEL_PLAYER[] = {
     &ME_PLAYER_ALWAYS_RUN,
     &ME_Space4_Bluefont,
     &ME_PLAYER_EQUIP_PICKUPS,
+    &ME_Space4_Bluefont,
+    &ME_PLAYER_DISCONNECT,
 };
 
 static MenuString_t MEO_MACROS_TEMPLATE = MAKE_MENUSTRING( NULL, &MF_Bluefont, MAXRIDECULELENGTH, 0 );
@@ -3383,12 +3386,16 @@ static MenuEntry_t *Menu_AdjustForCurrentEntryAssignment(MenuMenu_t *menu)
 
     Bassert(currentry);
 
+    menu->scrollPos = max<int32_t>(menu->scrollPos, 0);
+
     Menu_EntryFocus(/*currentry*/);
 
     if (currentry->ybottom - menu->scrollPos > klabs(menu->format->bottomcutoff))
         menu->scrollPos = currentry->ybottom - klabs(menu->format->bottomcutoff);
     else if (currentry->ytop - menu->scrollPos < menu->format->pos.y)
         menu->scrollPos = currentry->ytop - menu->format->pos.y;
+
+    menu->scrollPos = max<int32_t>(menu->scrollPos, 0);
 
     return currentry;
 }
@@ -3788,12 +3795,18 @@ static void Menu_ApplySelectedPlayerSetup(void)
 
 static void Menu_UpdatePlayerSetupEntries(void)
 {
+    int const selectedPlayer = Menu_GetSelectedPlayerSetupPlayer();
+
     MEO_PLAYER_NAME.variable = Menu_GetSelectedPlayerName();
     MEO_PLAYER_COLOR.data = Menu_GetSelectedPlayerColor();
     MEO_PLAYER_TEAM.data = Menu_GetSelectedPlayerTeam();
     MEO_PLAYER_AUTOAIM.data = Menu_GetSelectedPlayerAutoAim();
     MEO_PLAYER_ALWAYS_RUN.data = Menu_GetSelectedPlayerAlwaysRun();
     ME_PLAYER_NAME.flags &= ~MEF_Hidden;
+    MenuEntry_HideOnCondition(&ME_PLAYER_DISCONNECT,
+        Menu_IsEditingPrimaryPlayerSetup()
+        || (g_player[myconnectindex].ps->gm & MODE_GAME) == 0
+        || !G_IsSplitScreenPlayerActive(selectedPlayer));
 }
 
 static void Menu_UpdateControlSetupEntries(void)
@@ -4800,6 +4813,11 @@ static void Menu_PreDrawBackground(MenuID_t cm, const vec2_t origin)
 {
     switch (cm)
     {
+    case MENU_MAIN:
+        if ((g_player[myconnectindex].ps->gm & MODE_GAME) == 0)
+            Menu_DrawBackground(origin);
+        break;
+
     case MENU_CREDITS:
     case MENU_CREDITS2:
     case MENU_CREDITS3:
@@ -6476,7 +6494,8 @@ void M_RecordReplayCurrentLevelCompleted(void)
     if (!Menu_CanUseReplayLevels())
         return;
 
-    Menu_RecordReplayLevelCompleted(ud.volume_number, ud.level_number);
+    int32_t const completedLevel = ud.last_level > 0 ? ud.last_level - 1 : ud.level_number;
+    Menu_RecordReplayLevelCompleted(ud.volume_number, completedLevel);
 }
 
 static int32_t Menu_IsReplayLevelCurrent(int32_t const entryIndex)
@@ -8805,6 +8824,7 @@ static void Menu_AboutToStartDisplaying(Menu_t * m)
     case MENU_MAIN_INGAME:
         if (FURY)
             ME_MAIN_LOADGAME.name = s_LoadGame;
+        M_MAIN_INGAME.scrollPos = max<int32_t>(M_MAIN_INGAME.scrollPos, 0);
         break;
 
     case MENU_NEWGAMECUSTOM:
@@ -9243,7 +9263,11 @@ static inline int32_t Menu_UpdateScreenOK(MenuID_t cm)
 
 void Menu_Open(uint8_t playerID)
 {
+    bool const openingGameMenu = (g_player[playerID].ps->gm & MODE_GAME) != 0;
     g_player[playerID].ps->gm |= MODE_MENU;
+
+    if (openingGameMenu)
+        I_LockNonPrimaryMenuGamepads(1000);
 
     I_ClearAllInput();
 
@@ -10756,6 +10780,17 @@ static void Menu_RunInput_EntryLink_Activate(MenuEntry_t *entry)
     if (entry == &ME_REPLAY_LEVEL_GOTO && Menu_IsReplayLevelCurrent(g_replayLevelSelectedIndex))
         return;
 
+    if (entry == &ME_PLAYER_DISCONNECT)
+    {
+        int const playerNum = Menu_GetSelectedPlayerSetupPlayer();
+        if (playerNum != myconnectindex && G_DisconnectSplitScreenPlayer(playerNum) == 0)
+        {
+            Menu_UpdatePlayerSetupEntries();
+            Menu_RunInput_Menu_MovementVerify(&M_PLAYER);
+        }
+        return;
+    }
+
     auto link = (MenuLink_t*)entry->entry;
 
     Menu_EntryLinkActivate(entry);
@@ -11985,7 +12020,7 @@ void M_DisplayMenus(void)
         m_mousewake_watchpoint = 0;
     }
 
-    if (gamepadButtonActivity && g_mouseClickState != MOUSE_IDLE)
+    if (gamepadButtonActivity)
         m_suppressSyntheticMouseClickFrames = 8;
 
     if (m_suppressSyntheticMouseClickFrames > 0)
@@ -12015,7 +12050,9 @@ void M_DisplayMenus(void)
     if (!FURY && ((g_player[myconnectindex].ps->gm&MODE_GAME) || ud.recstat==2) && backgroundOK)
         videoFadeToBlack(1);
 
-    if (Menu_UpdateScreenOK(g_currentMenu))
+    if ((g_player[myconnectindex].ps->gm & MODE_GAME) == 0)
+        videoSetViewableArea(0, 0, xdim - 1, ydim - 1);
+    else if (Menu_UpdateScreenOK(g_currentMenu))
         G_UpdateScreenArea();
 
 #if !defined EDUKE32_TOUCH_DEVICES

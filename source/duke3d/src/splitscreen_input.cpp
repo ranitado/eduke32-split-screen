@@ -51,7 +51,6 @@ constexpr float PRECISION_AIM_SENS_X = .8f;
 constexpr float PRECISION_AIM_SENS_Y = .8f;
 constexpr float AIM_REFERENCE_FPS = 60.f;
 constexpr int MAX_LOCAL_PLAYERS = 4;
-constexpr uint8_t WEAPON_PULSE_FRAMES = 2;
 
 enum split_config_menu_page_t
 {
@@ -94,11 +93,12 @@ static uint8_t g_splitScreenPrevAxisActive[MAXPLAYERS][GAMEPAD_AXIS_COUNT][2];
 static int16_t g_splitScreenRunTriggerBaseline[MAXPLAYERS][GAMEPAD_AXIS_COUNT];
 static uint8_t g_splitScreenRunTriggerBaselineSet[MAXPLAYERS][GAMEPAD_AXIS_COUNT];
 static uint8_t g_splitScreenPadConnected[MAXPLAYERS];
-static int8_t g_splitScreenWeaponPulseDir[MAXPLAYERS];
-static uint8_t g_splitScreenWeaponPulseFrames[MAXPLAYERS];
+static int8_t g_splitScreenWeaponQueuedDir[MAXPLAYERS];
+static uint8_t g_splitScreenWeaponHeld[MAXPLAYERS][2];
 static split_config_menu_state_t g_splitScreenConfigMenu[MAXPLAYERS];
 static uint32_t g_splitScreenContinuePrevButtons[MAX_LOCAL_PLAYERS];
 static uint32_t g_splitScreenJoinPrevButtons[MAX_LOCAL_PLAYERS];
+static uint32_t g_splitScreenKeyboardMenuPrevActions;
 static uint8_t g_splitScreenJoinSuppressFrames[MAXPLAYERS];
 static uint64_t g_splitScreenAimLastTicks[MAXPLAYERS];
 
@@ -555,7 +555,7 @@ static int G_GetSplitScreenConfigMenuEntryCount(split_config_menu_page_t const p
 {
     switch (page)
     {
-        case SPLIT_CONFIG_MENU_MAIN:       return 3;
+        case SPLIT_CONFIG_MENU_MAIN:       return 4;
         case SPLIT_CONFIG_MENU_PLAYER:     return G_ShowSplitScreenPlayerTeamOption() ? 5 : 4;
         case SPLIT_CONFIG_MENU_CONTROLLER: return 5;
         case SPLIT_CONFIG_MENU_DISCONNECT_CONFIRM: return 2;
@@ -655,6 +655,28 @@ static void G_ModifySplitScreenConfigMenuEntry(int const playerNum, int const co
         G_SaveSplitScreenPlayerConfig(playerNum);
 }
 
+static void G_OpenPrimaryPauseMenuFromSplitScreen(int const openerPlayerNum)
+{
+    auto const primaryPlayer = g_player[myconnectindex].ps;
+    if (primaryPlayer == nullptr || (primaryPlayer->gm & MODE_GAME) == 0)
+        return;
+
+    G_CloseAllSplitScreenConfigMenus();
+    ud.pause_on = 0;
+    S_PauseSounds(true);
+
+    Menu_Open(myconnectindex);
+    I_LockMenuInputToPlayer(openerPlayerNum, 1000);
+    I_ClearAllInput();
+
+    if ((!g_netServer && ud.multimode < 2) && ud.recstat != 2)
+        ready2send = 0;
+
+    Menu_Change(MENU_MAIN_INGAME);
+    screenpeek = myconnectindex;
+    S_MenuSound();
+}
+
 static void G_ActivateSplitScreenConfigMenuEntry(int const playerNum, int const controllerProfile)
 {
     auto &menu = g_splitScreenConfigMenu[playerNum];
@@ -663,8 +685,10 @@ static void G_ActivateSplitScreenConfigMenuEntry(int const playerNum, int const 
     {
         case SPLIT_CONFIG_MENU_MAIN:
             if (menu.current == 0)
-                G_SetSplitScreenConfigMenuPage(playerNum, SPLIT_CONFIG_MENU_PLAYER);
+                G_OpenPrimaryPauseMenuFromSplitScreen(playerNum);
             else if (menu.current == 1)
+                G_SetSplitScreenConfigMenuPage(playerNum, SPLIT_CONFIG_MENU_PLAYER);
+            else if (menu.current == 2)
                 G_SetSplitScreenConfigMenuPage(playerNum, SPLIT_CONFIG_MENU_CONTROLLER);
             else
                 G_SetSplitScreenConfigMenuPage(playerNum, SPLIT_CONFIG_MENU_DISCONNECT_CONFIRM);
@@ -700,23 +724,16 @@ static void G_ActivateSplitScreenConfigMenuEntry(int const playerNum, int const 
     }
 }
 
-static void G_UpdateSplitScreenConfigMenu(int const playerNum, int const controllerProfile, gamepadstate_t const &state)
+static void G_UpdateSplitScreenConfigMenuFromActions(int const playerNum, int const controllerProfile,
+                                                     bool const upPressed, bool const downPressed,
+                                                     bool const leftPressed, bool const rightPressed,
+                                                     bool const acceptPressed, bool const backPressed)
 {
     auto &menu = g_splitScreenConfigMenu[playerNum];
     int const entryCount = G_GetSplitScreenConfigMenuEntryCount(menu.page);
     if (entryCount <= 0)
         return;
 
-    bool const upPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_DPAD_UP)
-                        || G_GamepadDigitalAxisPressed(playerNum, state, GAMEPAD_AXIS_LEFTY, 0);
-    bool const downPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_DPAD_DOWN)
-                          || G_GamepadDigitalAxisPressed(playerNum, state, GAMEPAD_AXIS_LEFTY, 1);
-    bool const leftPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_DPAD_LEFT)
-                          || G_GamepadDigitalAxisPressed(playerNum, state, GAMEPAD_AXIS_LEFTX, 0);
-    bool const rightPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_DPAD_RIGHT)
-                           || G_GamepadDigitalAxisPressed(playerNum, state, GAMEPAD_AXIS_LEFTX, 1);
-    bool const acceptPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_A);
-    bool const backPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_B);
     bool const canModifyCurrentEntry = (menu.page == SPLIT_CONFIG_MENU_PLAYER)
                                     || (menu.page == SPLIT_CONFIG_MENU_CONTROLLER && menu.current < 4);
 
@@ -752,6 +769,72 @@ static void G_UpdateSplitScreenConfigMenu(int const playerNum, int const control
     }
 }
 
+static void G_UpdateSplitScreenConfigMenu(int const playerNum, int const controllerProfile, gamepadstate_t const &state)
+{
+    bool const upPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_DPAD_UP)
+                        || G_GamepadDigitalAxisPressed(playerNum, state, GAMEPAD_AXIS_LEFTY, 0);
+    bool const downPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_DPAD_DOWN)
+                          || G_GamepadDigitalAxisPressed(playerNum, state, GAMEPAD_AXIS_LEFTY, 1);
+    bool const leftPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_DPAD_LEFT)
+                          || G_GamepadDigitalAxisPressed(playerNum, state, GAMEPAD_AXIS_LEFTX, 0);
+    bool const rightPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_DPAD_RIGHT)
+                           || G_GamepadDigitalAxisPressed(playerNum, state, GAMEPAD_AXIS_LEFTX, 1);
+    bool const acceptPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_A);
+    bool const backPressed = G_GamepadButtonIndexPressed(state, g_splitScreenPrevButtons[playerNum], GP_B);
+
+    G_UpdateSplitScreenConfigMenuFromActions(playerNum, controllerProfile, upPressed, downPressed, leftPressed, rightPressed, acceptPressed, backPressed);
+}
+
+enum split_keyboard_menu_action_t : uint32_t
+{
+    SPLIT_KEYMENU_UP     = 1u << 0,
+    SPLIT_KEYMENU_DOWN   = 1u << 1,
+    SPLIT_KEYMENU_LEFT   = 1u << 2,
+    SPLIT_KEYMENU_RIGHT  = 1u << 3,
+    SPLIT_KEYMENU_ACCEPT = 1u << 4,
+    SPLIT_KEYMENU_BACK   = 1u << 5,
+};
+
+static uint32_t G_GetSplitScreenKeyboardMenuActions(void)
+{
+    uint32_t actions = 0;
+
+    if (KB_KeyPressed(sc_UpArrow))
+        actions |= SPLIT_KEYMENU_UP;
+    if (KB_KeyPressed(sc_DownArrow))
+        actions |= SPLIT_KEYMENU_DOWN;
+    if (KB_KeyPressed(sc_LeftArrow))
+        actions |= SPLIT_KEYMENU_LEFT;
+    if (KB_KeyPressed(sc_RightArrow))
+        actions |= SPLIT_KEYMENU_RIGHT;
+    if (KB_KeyPressed(sc_Enter) || KB_KeyPressed(sc_kpad_Enter) || KB_KeyPressed(sc_Space))
+        actions |= SPLIT_KEYMENU_ACCEPT;
+    if (KB_KeyPressed(sc_Escape) || KB_KeyPressed(sc_BackSpace))
+        actions |= SPLIT_KEYMENU_BACK;
+
+    return actions;
+}
+
+static int G_GetActiveKeyboardMouseSplitScreenPlayer(void)
+{
+    for (int viewIndex = 0, playerCount = min<int32_t>(G_GetSplitScreenPlayerCount(), MAX_LOCAL_PLAYERS); viewIndex < playerCount; ++viewIndex)
+    {
+        int const playerNum = G_GetSplitScreenPlayer(viewIndex);
+        if ((unsigned)playerNum < MAX_LOCAL_PLAYERS && G_SplitScreenInputHasKeyboardMouse(G_GetSplitScreenPlayerInput(playerNum)))
+            return playerNum;
+    }
+
+    return -1;
+}
+
+static void G_UpdateSplitScreenKeyboardMenuInput(void)
+{
+    // Keyboard/mouse keeps its normal global menu behavior. Even when assigned to
+    // a secondary player for gameplay, Escape opens the full pause menu instead
+    // of the per-player simplified split-screen menu. Keyboard join edge state is
+    // handled in G_UpdateSplitScreenJoinInputs().
+}
+
 static char const *G_GetIndexedName(char const * const * const names, int const count, int const index)
 {
     return names[clamp(index, 0, count - 1)];
@@ -766,8 +849,10 @@ static void G_FormatSplitScreenConfigMenuLine(int const playerNum, int const con
     {
         case SPLIT_CONFIG_MENU_MAIN:
             if (menu.current == 0)
-                Bsnprintf(buffer, bufferSize, "Player Setup");
+                Bsnprintf(buffer, bufferSize, "Pause Menu");
             else if (menu.current == 1)
+                Bsnprintf(buffer, bufferSize, "Player Setup");
+            else if (menu.current == 2)
                 Bsnprintf(buffer, bufferSize, "Controller Setup");
             else
                 Bsnprintf(buffer, bufferSize, "Disconnect player");
@@ -1007,10 +1092,19 @@ static void G_ClearSplitScreenPadInput(int const playerNum)
     memset(g_splitScreenPrevAxisActive[playerNum], 0, sizeof(g_splitScreenPrevAxisActive[playerNum]));
     memset(g_splitScreenRunTriggerBaselineSet[playerNum], 0, sizeof(g_splitScreenRunTriggerBaselineSet[playerNum]));
     g_splitScreenPadConnected[playerNum] = 0;
-    g_splitScreenWeaponPulseDir[playerNum] = 0;
-    g_splitScreenWeaponPulseFrames[playerNum] = 0;
+    g_splitScreenWeaponQueuedDir[playerNum] = 0;
+    memset(g_splitScreenWeaponHeld[playerNum], 0, sizeof(g_splitScreenWeaponHeld[playerNum]));
     g_splitScreenAimLastTicks[playerNum] = 0;
     g_splitScreenJoinSuppressFrames[playerNum] = 0;
+}
+
+static void G_UpdateSplitScreenWeaponHeldState(int const playerNum, int const controllerProfile, gamepadstate_t const &state)
+{
+    if ((unsigned)playerNum >= MAXPLAYERS)
+        return;
+
+    g_splitScreenWeaponHeld[playerNum][0] = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Previous_Weapon);
+    g_splitScreenWeaponHeld[playerNum][1] = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Next_Weapon);
 }
 
 static void G_FreezeSplitScreenPadInput(int const playerNum, gamepadstate_t const &state)
@@ -1020,14 +1114,17 @@ static void G_FreezeSplitScreenPadInput(int const playerNum, gamepadstate_t cons
 
     g_splitScreenLocalInputs[playerNum] = {};
     g_splitScreenPadConnected[playerNum] = 0;
-    g_splitScreenWeaponPulseDir[playerNum] = 0;
-    g_splitScreenWeaponPulseFrames[playerNum] = 0;
+    g_splitScreenWeaponQueuedDir[playerNum] = 0;
     g_splitScreenAimLastTicks[playerNum] = 0;
 
     if (state.connected)
+    {
+        G_UpdateSplitScreenWeaponHeldState(playerNum, G_GetControllerProfileForPlayer(playerNum), state);
         G_UpdatePreviousGamepadState(playerNum, state);
+    }
     else
     {
+        memset(g_splitScreenWeaponHeld[playerNum], 0, sizeof(g_splitScreenWeaponHeld[playerNum]));
         g_splitScreenPrevButtons[playerNum] = 0;
         memset(g_splitScreenPrevAxisActive[playerNum], 0, sizeof(g_splitScreenPrevAxisActive[playerNum]));
     }
@@ -1092,9 +1189,9 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
 
     if ((pPlayer->gm & (MODE_MENU | MODE_TYPE)) != 0 || ud.pause_on)
     {
+        G_UpdateSplitScreenWeaponHeldState(playerNum, controllerProfile, state);
         G_UpdatePreviousGamepadState(playerNum, state);
-        g_splitScreenWeaponPulseDir[playerNum] = 0;
-        g_splitScreenWeaponPulseFrames[playerNum] = 0;
+        g_splitScreenWeaponQueuedDir[playerNum] = 0;
         g_splitScreenAimLastTicks[playerNum] = 0;
         return;
     }
@@ -1103,17 +1200,19 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
     bool const altFireHeld    = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Alt_Fire);
     bool const firePressed    = G_GamepadFunctionPressed(playerNum, controllerProfile, state, gamefunc_Fire);
     bool const altFirePress   = G_GamepadFunctionPressed(playerNum, controllerProfile, state, gamefunc_Alt_Fire);
-    bool const nextWeaponPressed = G_GamepadFunctionPressed(playerNum, controllerProfile, state, gamefunc_Next_Weapon);
-    bool const prevWeaponPressed = G_GamepadFunctionPressed(playerNum, controllerProfile, state, gamefunc_Previous_Weapon);
-    int8_t const weaponCycleDirection = nextWeaponPressed == prevWeaponPressed ? 0 : (nextWeaponPressed ? 1 : -1);
-    if (weaponCycleDirection != 0)
-    {
-        g_splitScreenWeaponPulseDir[playerNum] = weaponCycleDirection;
-        g_splitScreenWeaponPulseFrames[playerNum] = WEAPON_PULSE_FRAMES;
-    }
+    bool const nextWeaponHeld = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Next_Weapon);
+    bool const prevWeaponHeld = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Previous_Weapon);
+    bool const nextWeaponPressed = nextWeaponHeld && !g_splitScreenWeaponHeld[playerNum][1];
+    bool const prevWeaponPressed = prevWeaponHeld && !g_splitScreenWeaponHeld[playerNum][0];
+    g_splitScreenWeaponHeld[playerNum][1] = nextWeaponHeld;
+    g_splitScreenWeaponHeld[playerNum][0] = prevWeaponHeld;
 
-    bool const nextWeapon = g_splitScreenWeaponPulseDir[playerNum] > 0 && g_splitScreenWeaponPulseFrames[playerNum] > 0;
-    bool const prevWeapon = g_splitScreenWeaponPulseDir[playerNum] < 0 && g_splitScreenWeaponPulseFrames[playerNum] > 0;
+    int8_t const weaponCycleDirection = nextWeaponPressed == prevWeaponPressed ? 0 : (nextWeaponPressed ? 1 : -1);
+    if (weaponCycleDirection != 0 && g_splitScreenWeaponQueuedDir[playerNum] == 0)
+        g_splitScreenWeaponQueuedDir[playerNum] = weaponCycleDirection;
+
+    bool const nextWeapon = g_splitScreenWeaponQueuedDir[playerNum] > 0;
+    bool const prevWeapon = g_splitScreenWeaponQueuedDir[playerNum] < 0;
     bool const dpadSelect = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Dpad_Select);
     bool const dpadAiming = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Dpad_Aiming);
 
@@ -1197,12 +1296,6 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
     else if (dpadAiming)
         input.fvel = 0;
 
-    if (g_splitScreenWeaponPulseFrames[playerNum] > 0)
-    {
-        if (--g_splitScreenWeaponPulseFrames[playerNum] == 0)
-            g_splitScreenWeaponPulseDir[playerNum] = 0;
-    }
-
     bool const semiautoWeapon = (PWEAPON(playerNum, pPlayer->curr_weapon, Flags) & WEAPON_SEMIAUTO) != 0;
     bool const fireActive     = semiautoWeapon ? firePressed : fireHeld;
     bool const altFireActive  = semiautoWeapon ? altFirePress : altFireHeld;
@@ -1251,9 +1344,51 @@ static int G_GetJoinPlayerForGamepadIndex(int const gamepadIndex)
     return -1;
 }
 
+static int G_GetJoinPlayerForKeyboardMouse(void)
+{
+    int const assignedPlayer = G_GetSplitScreenKeyboardMousePlayer();
+    if (assignedPlayer >= 0)
+        return assignedPlayer;
+
+    for (int playerNum = 1; playerNum < MAX_LOCAL_PLAYERS; ++playerNum)
+        if (!G_IsSplitScreenPlayerActive(playerNum))
+            return playerNum;
+
+    return -1;
+}
+
 static void G_UpdateSplitScreenJoinInputs(void)
 {
     bool const canJoin = G_CanJoinCurrentGame();
+    uint32_t const keyboardActions = G_GetSplitScreenKeyboardMenuActions();
+    bool const keyboardJoinPressed = (keyboardActions & SPLIT_KEYMENU_ACCEPT) != 0
+                                  && (g_splitScreenKeyboardMenuPrevActions & SPLIT_KEYMENU_ACCEPT) == 0;
+
+    if (canJoin && keyboardJoinPressed)
+    {
+        int const assignedPlayer = G_GetSplitScreenKeyboardMousePlayer();
+        int const playerNum = G_GetJoinPlayerForKeyboardMouse();
+        if (playerNum >= 0 && (unsigned)playerNum < MAX_LOCAL_PLAYERS && !G_IsSplitScreenPlayerActive(playerNum))
+        {
+            if (assignedPlayer < 0)
+            {
+                ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+                CONFIG_WriteSetup(0);
+            }
+
+            if (G_AddSplitScreenPlayer(playerNum) >= 0)
+            {
+                G_CloseSplitScreenConfigMenu(playerNum);
+                KB_ClearKeyDown(sc_Enter);
+                KB_ClearKeyDown(sc_kpad_Enter);
+                KB_ClearKeyDown(sc_Space);
+                G_PlaySplitScreenMenuSound(PISTOL_BODYHIT);
+            }
+        }
+    }
+
+    g_splitScreenKeyboardMenuPrevActions = keyboardActions;
+
     int const connectedGamepads = min<int>(joyGetConnectedGamepadCount(), MAX_LOCAL_PLAYERS);
 
     for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_PLAYERS; ++gamepadIndex)
@@ -1325,6 +1460,7 @@ void G_DrawSplitScreenConfigMenus(void)
 void G_UpdateSplitScreenLocalInputs(void)
 {
     M_UpdateDeveloperModeToggle();
+    G_UpdateSplitScreenKeyboardMenuInput();
     G_UpdateSplitScreenJoinInputs();
 
     if (!G_HasNativeSplitScreenGamepads())
@@ -1448,6 +1584,12 @@ void G_FillSplitScreenInputsForTic(void)
         else
         {
             input = transformedInput;
+        }
+
+        if (g_splitScreenWeaponQueuedDir[playerNum] != 0)
+        {
+            g_splitScreenWeaponQueuedDir[playerNum] = 0;
+            g_splitScreenLocalInputs[playerNum].bits &= ~SK_WEAPON_MASK;
         }
     }
 }

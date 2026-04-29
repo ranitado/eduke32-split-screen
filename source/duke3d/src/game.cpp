@@ -6766,6 +6766,7 @@ static int G_EndOfLevel(void)
 
         if (!G_HaveUserMap())
         {
+            int32_t const completedLevel = ud.last_level > 0 ? ud.last_level - 1 : ud.level_number;
             int32_t secretRooms = p.secret_rooms;
             int32_t maxSecretRooms = p.max_secret_rooms;
 
@@ -6789,7 +6790,7 @@ static int G_EndOfLevel(void)
             if (maxSecretRooms > 0)
                 secretRooms = min<int32_t>(secretRooms, maxSecretRooms);
 
-            CONFIG_SetSplitScreenLevelProgress(g_addonNum, ud.volume_number, ud.level_number, secretRooms, maxSecretRooms, p.player_par);
+            CONFIG_SetSplitScreenLevelProgress(g_addonNum, ud.volume_number, completedLevel, secretRooms, maxSecretRooms, p.player_par);
             M_RecordReplayCurrentLevelCompleted();
         }
 

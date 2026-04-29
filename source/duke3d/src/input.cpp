@@ -34,12 +34,18 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 static uint32_t g_menuGamepadClearButtons = 0;
 static uint32_t g_menuGamepadLastButtons = 0;
+static direction g_menuGamepadClearDirection = dir_None;
+static int32_t g_menuGamepadClearDirectionSource = -1;
 static direction g_menuGamepadRepeat = dir_None;
+static int32_t g_menuGamepadRepeatSource = -1;
 static int32_t g_menuGamepadRepeatClock = -1;
 static uint32_t g_menuKeyboardMouseClearActions = 0;
 static UserInput g_menuUserInput;
+static int32_t g_menuUserInputDirectionSource = -1;
 static int32_t g_menuUserInputClock = -1;
 static int32_t g_menuLastAdvanceGamepadIndex = -1;
+static int32_t g_menuAllGamepadsUnlockClock = 0;
+static int32_t g_menuInputLockPlayer = 0;
 
 enum MenuKeyboardMouseAction_t
 {
@@ -51,6 +57,42 @@ static bool I_IsGameMenuInputRestricted(void)
 {
     auto const player = g_player[myconnectindex].ps;
     return player != nullptr && (player->gm & MODE_GAME) != 0;
+}
+
+static bool I_IsGameMenuOpen(void)
+{
+    auto const player = g_player[myconnectindex].ps;
+    return player != nullptr && (player->gm & (MODE_GAME | MODE_MENU)) == (MODE_GAME | MODE_MENU);
+}
+
+static bool I_MenuAllGamepadsAllowed(void)
+{
+    return I_IsGameMenuOpen() && (int32_t)timerGetTicks() >= g_menuAllGamepadsUnlockClock;
+}
+
+static bool I_MenuInputLockActive(void)
+{
+    return I_IsGameMenuOpen() && !I_MenuAllGamepadsAllowed();
+}
+
+static bool I_KeyboardMouseAllowedForMenu(void)
+{
+    return true;
+}
+
+void I_LockMenuInputToPlayer(int32_t const playerNum, int32_t const milliseconds)
+{
+    g_menuInputLockPlayer = clamp<int32_t>(playerNum, 0, MAXSPLITSCREENCONTROLLERS - 1);
+    g_menuAllGamepadsUnlockClock = (int32_t)timerGetTicks() + max<int32_t>(milliseconds, 0);
+
+    int32_t const lockedGamepadIndex = G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(g_menuInputLockPlayer));
+    if ((unsigned)lockedGamepadIndex < MAXSPLITSCREENCONTROLLERS)
+        joySetPrimaryGamepadIndex(lockedGamepadIndex);
+}
+
+void I_LockNonPrimaryMenuGamepads(int32_t const milliseconds)
+{
+    I_LockMenuInputToPlayer(myconnectindex, milliseconds);
 }
 
 static bool I_IsGamepadAssignedToNonPrimaryPlayer(int const gamepadIndex)
@@ -73,6 +115,15 @@ static bool I_IsMenuGamepadAllowed(int const gamepadIndex)
     if (!I_IsGameMenuInputRestricted())
         return true;
 
+    if (I_MenuAllGamepadsAllowed())
+        return true;
+
+    if (I_IsGameMenuOpen() && I_MenuInputLockActive())
+    {
+        int32_t const lockedGamepadIndex = G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(g_menuInputLockPlayer));
+        return lockedGamepadIndex >= 0 && lockedGamepadIndex == gamepadIndex;
+    }
+
     int32_t const assignedGamepadIndex = G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(myconnectindex));
     if (assignedGamepadIndex >= 0)
         return assignedGamepadIndex == gamepadIndex;
@@ -83,43 +134,77 @@ static bool I_IsMenuGamepadAllowed(int const gamepadIndex)
 
 static bool I_ShouldSuppressControlJoystickInputForMenu(void)
 {
-    if (!I_IsGameMenuInputRestricted())
-        return false;
-
-    // CONTROL_GetUserInput() only reads the primary controller. Keep that path
-    // alive when player 1 owns that same physical pad; otherwise raw per-pad
-    // filtering below decides which gamepad is allowed to drive the menu.
-    int32_t const assignedGamepadIndex = G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(myconnectindex));
-    return assignedGamepadIndex >= 0 && assignedGamepadIndex != joyGetPrimaryGamepadIndex();
+    return I_IsGameMenuInputRestricted() && !I_IsGameMenuOpen();
 }
 
-static uint32_t I_GetAllowedMenuGamepadButtons(direction * const heldDirection = nullptr, int32_t * const advanceGamepadIndex = nullptr)
+static direction I_GetMenuGamepadDirection(gamepadstate_t const &state)
+{
+    int constexpr axisThreshold = 8000;
+
+    if ((state.buttons & (1u << CONTROLLER_BUTTON_DPAD_UP)) || state.axes[GAMEPAD_AXIS_LEFTY] <= -axisThreshold)
+        return dir_Up;
+    if ((state.buttons & (1u << CONTROLLER_BUTTON_DPAD_DOWN)) || state.axes[GAMEPAD_AXIS_LEFTY] >= axisThreshold)
+        return dir_Down;
+    if ((state.buttons & (1u << CONTROLLER_BUTTON_DPAD_LEFT)) || state.axes[GAMEPAD_AXIS_LEFTX] <= -axisThreshold)
+        return dir_Left;
+    if ((state.buttons & (1u << CONTROLLER_BUTTON_DPAD_RIGHT)) || state.axes[GAMEPAD_AXIS_LEFTX] >= axisThreshold)
+        return dir_Right;
+
+    return dir_None;
+}
+
+static bool I_GamepadHasMenuActivity(gamepadstate_t const &state)
+{
+    return state.buttons != 0 || I_GetMenuGamepadDirection(state) != dir_None;
+}
+
+static void I_UpdateMenuPrimaryGamepadFromActivity(void)
+{
+    if (!I_IsGameMenuOpen() || !I_MenuAllGamepadsAllowed())
+        return;
+
+    int32_t const currentPrimaryGamepadIndex = joyGetPrimaryGamepadIndex();
+    int32_t activeGamepadIndex = -1;
+
+    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
+    {
+        if (!I_IsMenuGamepadAllowed(gamepadIndex))
+            continue;
+
+        gamepadstate_t state {};
+        if (joyGetGamepadState(gamepadIndex, &state) != 0 || !state.connected || !I_GamepadHasMenuActivity(state))
+            continue;
+
+        if (gamepadIndex == currentPrimaryGamepadIndex)
+            return;
+
+        if (activeGamepadIndex < 0)
+            activeGamepadIndex = gamepadIndex;
+    }
+
+    if (activeGamepadIndex >= 0)
+        joySetPrimaryGamepadIndex(activeGamepadIndex);
+}
+
+static uint32_t I_GetAllowedMenuGamepadButtons(direction * const heldDirection = nullptr, int32_t * const advanceGamepadIndex = nullptr,
+                                              int32_t * const heldDirectionGamepadIndex = nullptr)
 {
     if (heldDirection != nullptr)
         *heldDirection = dir_None;
     if (advanceGamepadIndex != nullptr)
         *advanceGamepadIndex = -1;
+    if (heldDirectionGamepadIndex != nullptr)
+        *heldDirectionGamepadIndex = -1;
 
     uint32_t buttons = 0;
-    int const gamepadCount = min<int32_t>(joyGetConnectedGamepadCount(), MAXSPLITSCREENCONTROLLERS);
-
-    for (int gamepadIndex = 0; gamepadIndex < gamepadCount; ++gamepadIndex)
+    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
     {
         bool const allowed = I_IsMenuGamepadAllowed(gamepadIndex);
         gamepadstate_t state {};
         if (joyGetGamepadState(gamepadIndex, &state) != 0 || !state.connected)
             continue;
 
-        direction rawDirection = dir_None;
-        int constexpr axisThreshold = 8000;
-        if ((state.buttons & (1u << CONTROLLER_BUTTON_DPAD_UP)) || state.axes[GAMEPAD_AXIS_LEFTY] <= -axisThreshold)
-            rawDirection = dir_Up;
-        else if ((state.buttons & (1u << CONTROLLER_BUTTON_DPAD_DOWN)) || state.axes[GAMEPAD_AXIS_LEFTY] >= axisThreshold)
-            rawDirection = dir_Down;
-        else if ((state.buttons & (1u << CONTROLLER_BUTTON_DPAD_LEFT)) || state.axes[GAMEPAD_AXIS_LEFTX] <= -axisThreshold)
-            rawDirection = dir_Left;
-        else if ((state.buttons & (1u << CONTROLLER_BUTTON_DPAD_RIGHT)) || state.axes[GAMEPAD_AXIS_LEFTX] >= axisThreshold)
-            rawDirection = dir_Right;
+        direction const rawDirection = I_GetMenuGamepadDirection(state);
 
         if (!allowed)
             continue;
@@ -128,10 +213,12 @@ static uint32_t I_GetAllowedMenuGamepadButtons(direction * const heldDirection =
         if (advanceGamepadIndex != nullptr && *advanceGamepadIndex < 0 && (state.buttons & (1u << CONTROLLER_BUTTON_A)))
             *advanceGamepadIndex = gamepadIndex;
 
-        if (heldDirection == nullptr || *heldDirection != dir_None)
+        if (rawDirection == dir_None || heldDirection == nullptr || *heldDirection != dir_None)
             continue;
 
         *heldDirection = rawDirection;
+        if (heldDirectionGamepadIndex != nullptr)
+            *heldDirectionGamepadIndex = gamepadIndex;
     }
 
     return buttons;
@@ -155,10 +242,9 @@ static direction I_GetPrimaryControllerMenuDirectionFallback(void)
 
 int32_t I_MenuGamepadActivity(void)
 {
-    int const gamepadCount = min<int32_t>(joyGetConnectedGamepadCount(), MAXSPLITSCREENCONTROLLERS);
-    int constexpr axisThreshold = 8000;
+    I_UpdateMenuPrimaryGamepadFromActivity();
 
-    for (int gamepadIndex = 0; gamepadIndex < gamepadCount; ++gamepadIndex)
+    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
     {
         if (!I_IsMenuGamepadAllowed(gamepadIndex))
             continue;
@@ -167,28 +253,44 @@ int32_t I_MenuGamepadActivity(void)
         if (joyGetGamepadState(gamepadIndex, &state) != 0 || !state.connected)
             continue;
 
-        if (state.buttons != 0
-            || klabs(state.axes[GAMEPAD_AXIS_LEFTX]) >= axisThreshold
-            || klabs(state.axes[GAMEPAD_AXIS_LEFTY]) >= axisThreshold)
+        if (I_GamepadHasMenuActivity(state))
             return 1;
     }
 
     return 0;
 }
 
-static direction I_FilterMenuGamepadDirection(direction const heldDirection)
+static direction I_FilterMenuGamepadDirection(direction const heldDirection, int32_t const directionGamepadIndex)
 {
     if (heldDirection == dir_None)
     {
+        g_menuGamepadClearDirection = dir_None;
+        g_menuGamepadClearDirectionSource = -1;
         g_menuGamepadRepeat = dir_None;
+        g_menuGamepadRepeatSource = -1;
         g_menuGamepadRepeatClock = -1;
         return dir_None;
     }
 
+    if (g_menuGamepadClearDirection != dir_None)
+    {
+        if (heldDirection == g_menuGamepadClearDirection && directionGamepadIndex == g_menuGamepadClearDirectionSource)
+        {
+            g_menuGamepadRepeat = heldDirection;
+            g_menuGamepadRepeatSource = directionGamepadIndex;
+            g_menuGamepadRepeatClock = (int32_t)timerGetTicks() + 500;
+            return dir_None;
+        }
+
+        g_menuGamepadClearDirection = dir_None;
+        g_menuGamepadClearDirectionSource = -1;
+    }
+
     int32_t const now = (int32_t)timerGetTicks();
-    if (heldDirection != g_menuGamepadRepeat)
+    if (heldDirection != g_menuGamepadRepeat || directionGamepadIndex != g_menuGamepadRepeatSource)
     {
         g_menuGamepadRepeat = heldDirection;
+        g_menuGamepadRepeatSource = directionGamepadIndex;
         g_menuGamepadRepeatClock = now + 500;
         return heldDirection;
     }
@@ -245,6 +347,15 @@ static void I_ClearMenuGamepadInput(void)
 {
     g_menuGamepadClearButtons |= g_menuGamepadLastButtons;
     g_menuGamepadLastButtons = 0;
+
+    if (g_menuUserInput.dir != dir_None)
+    {
+        g_menuGamepadClearDirection = g_menuUserInput.dir;
+        g_menuGamepadClearDirectionSource = g_menuUserInputDirectionSource;
+        g_menuGamepadRepeat = g_menuUserInput.dir;
+        g_menuGamepadRepeatSource = g_menuUserInputDirectionSource;
+        g_menuGamepadRepeatClock = (int32_t)timerGetTicks() + 500;
+    }
 }
 
 static void I_ClearMenuKeyboardMouseInput(void)
@@ -289,13 +400,23 @@ static UserInput *I_GetUserInput(void)
     bool const suppressControlJoystickInput = I_ShouldSuppressControlJoystickInputForMenu();
     UserInput info {};
 
+    I_UpdateMenuPrimaryGamepadFromActivity();
+
     CONTROL_SuppressJoystickInput = suppressControlJoystickInput;
     info = *CONTROL_GetUserInput(nullptr);
     CONTROL_SuppressJoystickInput = oldSuppressJoystickInput;
 
-    bool const keyboardEscapeHeld = KB_KeyPressed(sc_Escape) != 0;
+    bool const allowKeyboardMouse = I_KeyboardMouseAllowedForMenu();
+    if (!allowKeyboardMouse)
+    {
+        info.b_advance = false;
+        info.b_return = false;
+        info.b_escape = false;
+    }
+
+    bool const keyboardEscapeHeld = allowKeyboardMouse && KB_KeyPressed(sc_Escape) != 0;
     bool const keyboardEscapeActive = I_MenuKeyboardMouseActionActive(MENU_KM_ESCAPE, keyboardEscapeHeld);
-    bool const mouseReturnHeld = (MOUSE_GetButtons() & M_RIGHTBUTTON) != 0;
+    bool const mouseReturnHeld = allowKeyboardMouse && (MOUSE_GetButtons() & M_RIGHTBUTTON) != 0;
     bool const mouseReturnActive = I_MenuKeyboardMouseActionActive(MENU_KM_RETURN, mouseReturnHeld);
 
     if (keyboardEscapeHeld && !keyboardEscapeActive)
@@ -310,17 +431,26 @@ static UserInput *I_GetUserInput(void)
         info.b_return = false;
 
     direction heldDirection = dir_None;
+    int32_t heldDirectionGamepadIndex = -1;
     int32_t advanceGamepadIndex = -1;
-    uint32_t const buttons = I_GetAllowedMenuGamepadButtons(&heldDirection, &advanceGamepadIndex);
+    uint32_t const buttons = I_GetAllowedMenuGamepadButtons(&heldDirection, &advanceGamepadIndex, &heldDirectionGamepadIndex);
     if (heldDirection == dir_None && restrictGamepadInput)
+    {
         heldDirection = I_GetPrimaryControllerMenuDirectionFallback();
+        if (heldDirection != dir_None)
+            heldDirectionGamepadIndex = joyGetPrimaryGamepadIndex();
+    }
 
-    direction const direction = I_FilterMenuGamepadDirection(heldDirection);
+    direction const direction = I_FilterMenuGamepadDirection(heldDirection, heldDirectionGamepadIndex);
 
     g_menuGamepadLastButtons = buttons;
+    g_menuUserInputDirectionSource = -1;
 
     if (direction != dir_None)
+    {
         info.dir = direction;
+        g_menuUserInputDirectionSource = heldDirectionGamepadIndex;
+    }
 
     bool const gamepadAdvanceActive = I_ApplyMenuGamepadButtonFilter(info.b_advance, buttons, CONTROLLER_BUTTON_A);
     I_ApplyMenuGamepadButtonFilter(info.b_return, buttons, CONTROLLER_BUTTON_B);
@@ -351,17 +481,24 @@ void I_BeginMenuInputFrame(void)
 
 void I_ClearAllInput(void)
 {
+    direction heldDirection = dir_None;
+    int32_t heldDirectionGamepadIndex = -1;
+
     KB_FlushKeyboardQueue();
     KB_ClearKeysDown();
     MOUSE_ClearAllButtons();
     JOYSTICK_ClearAllButtons();
     CONTROL_ClearAllButtons();
-    g_menuGamepadClearButtons = I_GetAllowedMenuGamepadButtons();
+    g_menuGamepadClearButtons = I_GetAllowedMenuGamepadButtons(&heldDirection, nullptr, &heldDirectionGamepadIndex);
     g_menuGamepadLastButtons = 0;
-    g_menuGamepadRepeat = dir_None;
-    g_menuGamepadRepeatClock = -1;
+    g_menuGamepadClearDirection = heldDirection;
+    g_menuGamepadClearDirectionSource = heldDirectionGamepadIndex;
+    g_menuGamepadRepeat = heldDirection;
+    g_menuGamepadRepeatSource = g_menuGamepadClearDirectionSource;
+    g_menuGamepadRepeatClock = heldDirection == dir_None ? -1 : (int32_t)timerGetTicks() + 500;
     g_menuKeyboardMouseClearActions = 0;
     g_menuUserInput = {};
+    g_menuUserInputDirectionSource = -1;
     g_menuUserInputClock = -1;
     g_menuLastAdvanceGamepadIndex = -1;
     mouseAdvanceClickState();
@@ -448,16 +585,16 @@ int32_t I_EscapeTrigger(void) { return I_GetUserInput()->b_escape; }
 
 int32_t I_MenuUp(void)
 {
-    return I_GetUserInput()->dir == dir_Up || BUTTON(gamefunc_Move_Forward);
+    return I_GetUserInput()->dir == dir_Up;
 }
 
 int32_t I_MenuDown(void)
 {
-    return I_GetUserInput()->dir == dir_Down || BUTTON(gamefunc_Move_Backward);
+    return I_GetUserInput()->dir == dir_Down;
 }
 
-int32_t I_MenuLeft(void) { return I_GetUserInput()->dir == dir_Left || BUTTON(gamefunc_Turn_Left) || BUTTON(gamefunc_Strafe_Left); }
-int32_t I_MenuRight(void) { return I_GetUserInput()->dir == dir_Right || BUTTON(gamefunc_Turn_Right) || BUTTON(gamefunc_Strafe_Right); }
+int32_t I_MenuLeft(void) { return I_GetUserInput()->dir == dir_Left; }
+int32_t I_MenuRight(void) { return I_GetUserInput()->dir == dir_Right; }
 
 void I_MenuUpClear(void)
 {

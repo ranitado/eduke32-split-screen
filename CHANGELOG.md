@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6
+
+- Fixed several bugs and improved general stability.
+
 ## v0.5
 
 - Adds a replayable Levels menu with per-level thumbnails and progress details.

@@ -40,6 +40,8 @@ extern int32_t I_EscapeTrigger(void);
 extern int32_t I_GetMenuAdvanceGamepadIndex(void);
 extern int32_t I_MenuGamepadActivity(void);
 
+extern void I_LockNonPrimaryMenuGamepads(int32_t milliseconds);
+extern void I_LockMenuInputToPlayer(int32_t playerNum, int32_t milliseconds);
 extern void I_AdvanceTriggerClear(void);
 extern void I_GeneralTriggerClear(void);
 
