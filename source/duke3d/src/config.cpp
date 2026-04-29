@@ -1976,38 +1976,56 @@ static int32_t CONFIG_EnsureSetupScriptForProgress(int32_t const createIfMissing
 
 int32_t CONFIG_GetSplitScreenLevelProgress(int32_t const addonNum, int32_t const volumeNum, int32_t const levelNum, int32_t * const played, int32_t * const secrets, int32_t * const maxSecrets, int32_t * const bestTime)
 {
-    if (played != nullptr)
-        *played = 0;
-    if (secrets != nullptr)
-        *secrets = 0;
-    if (maxSecrets != nullptr)
-        *maxSecrets = 0;
-    if (bestTime != nullptr)
-        *bestTime = 0;
+    int32_t storedPlayed = 0;
+    int32_t storedSecrets = 0;
+    int32_t storedMaxSecrets = 0;
+    int32_t storedBestTime = 0;
 
     if ((unsigned)volumeNum >= MAXVOLUMES || (unsigned)levelNum >= MAXLEVELS || !CONFIG_EnsureSetupScriptForProgress(0))
+    {
+        if (played != nullptr)
+            *played = 0;
+        if (secrets != nullptr)
+            *secrets = 0;
+        if (maxSecrets != nullptr)
+            *maxSecrets = 0;
+        if (bestTime != nullptr)
+            *bestTime = 0;
         return 0;
+    }
 
     char key[64];
     int32_t value = 0;
 
     CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "Played");
-    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0 && played != nullptr)
-        *played = value != 0;
+    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0)
+        storedPlayed = value != 0;
 
     CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "Secrets");
-    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0 && secrets != nullptr)
-        *secrets = max<int32_t>(value, 0);
+    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0)
+        storedSecrets = max<int32_t>(value, 0);
 
     CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "MaxSecrets");
-    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0 && maxSecrets != nullptr)
-        *maxSecrets = max<int32_t>(value, 0);
+    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0)
+        storedMaxSecrets = max<int32_t>(value, 0);
 
     CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "BestTime");
-    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0 && bestTime != nullptr)
-        *bestTime = max<int32_t>(value, 0);
+    if (SCRIPT_GetNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, &value) == 0)
+        storedBestTime = max<int32_t>(value, 0);
 
-    return played == nullptr || *played != 0;
+    if (storedMaxSecrets > 0)
+        storedSecrets = min<int32_t>(storedSecrets, storedMaxSecrets);
+
+    if (played != nullptr)
+        *played = storedPlayed;
+    if (secrets != nullptr)
+        *secrets = storedSecrets;
+    if (maxSecrets != nullptr)
+        *maxSecrets = storedMaxSecrets;
+    if (bestTime != nullptr)
+        *bestTime = storedBestTime;
+
+    return played == nullptr || storedPlayed != 0;
 }
 
 int CONFIG_SetSplitScreenLevelProgress(int32_t const addonNum, int32_t const volumeNum, int32_t const levelNum, int32_t const secrets, int32_t const maxSecrets, int32_t const bestTime)
@@ -2018,15 +2036,20 @@ int CONFIG_SetSplitScreenLevelProgress(int32_t const addonNum, int32_t const vol
     int32_t oldPlayed = 0, oldSecrets = 0, oldMaxSecrets = 0, oldBestTime = 0;
     CONFIG_GetSplitScreenLevelProgress(addonNum, volumeNum, levelNum, &oldPlayed, &oldSecrets, &oldMaxSecrets, &oldBestTime);
 
+    int32_t const mergedMaxSecrets = max<int32_t>(max<int32_t>(oldMaxSecrets, 0), max<int32_t>(maxSecrets, 0));
+    int32_t mergedSecrets = max<int32_t>(max<int32_t>(oldSecrets, 0), max<int32_t>(secrets, 0));
+    if (mergedMaxSecrets > 0)
+        mergedSecrets = min<int32_t>(mergedSecrets, mergedMaxSecrets);
+
     char key[64];
     CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "Played");
     SCRIPT_PutNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, 1, FALSE, FALSE);
 
     CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "Secrets");
-    SCRIPT_PutNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, max<int32_t>(oldSecrets, secrets), FALSE, FALSE);
+    SCRIPT_PutNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, mergedSecrets, FALSE, FALSE);
 
     CONFIG_GetSplitScreenLevelProgressKey(key, sizeof(key), addonNum, volumeNum, levelNum, "MaxSecrets");
-    SCRIPT_PutNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, max<int32_t>(oldMaxSecrets, maxSecrets), FALSE, FALSE);
+    SCRIPT_PutNumber(ud.config.scripthandle, "SplitScreenLevelProgress", key, mergedMaxSecrets, FALSE, FALSE);
 
     if (bestTime > 0)
     {

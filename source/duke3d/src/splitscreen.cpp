@@ -237,6 +237,8 @@ static void G_SetupJoinedSplitScreenPlayer(int32_t const playerNum)
 
     P_ResetPlayer(playerNum);
     P_ResetMultiPlayer(playerNum);
+    g_player[playerNum].ps->actors_killed = 0;
+    g_player[playerNum].ps->secret_rooms = 0;
     if (playerNum != myconnectindex)
         g_player[playerNum].ps->got_access = primaryAccess;
     g_player[playerNum].ps->gm = MODE_GAME;

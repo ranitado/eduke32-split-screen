@@ -6786,6 +6786,9 @@ static int G_EndOfLevel(void)
                 }
             }
 
+            if (maxSecretRooms > 0)
+                secretRooms = min<int32_t>(secretRooms, maxSecretRooms);
+
             CONFIG_SetSplitScreenLevelProgress(g_addonNum, ud.volume_number, ud.level_number, secretRooms, maxSecretRooms, p.player_par);
             M_RecordReplayCurrentLevelCompleted();
         }

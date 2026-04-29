@@ -51,8 +51,6 @@ constexpr float PRECISION_AIM_SENS_X = .8f;
 constexpr float PRECISION_AIM_SENS_Y = .8f;
 constexpr float AIM_REFERENCE_FPS = 60.f;
 constexpr int MAX_LOCAL_PLAYERS = 4;
-constexpr uint8_t WEAPON_REPEAT_INITIAL_DELAY = 12;
-constexpr uint8_t WEAPON_REPEAT_INTERVAL = 4;
 constexpr uint8_t WEAPON_PULSE_FRAMES = 2;
 
 enum split_config_menu_page_t
@@ -96,8 +94,6 @@ static uint8_t g_splitScreenPrevAxisActive[MAXPLAYERS][GAMEPAD_AXIS_COUNT][2];
 static int16_t g_splitScreenRunTriggerBaseline[MAXPLAYERS][GAMEPAD_AXIS_COUNT];
 static uint8_t g_splitScreenRunTriggerBaselineSet[MAXPLAYERS][GAMEPAD_AXIS_COUNT];
 static uint8_t g_splitScreenPadConnected[MAXPLAYERS];
-static int8_t g_splitScreenWeaponRepeatDir[MAXPLAYERS];
-static uint8_t g_splitScreenWeaponRepeatDelay[MAXPLAYERS];
 static int8_t g_splitScreenWeaponPulseDir[MAXPLAYERS];
 static uint8_t g_splitScreenWeaponPulseFrames[MAXPLAYERS];
 static split_config_menu_state_t g_splitScreenConfigMenu[MAXPLAYERS];
@@ -940,39 +936,6 @@ static void G_DrawSplitScreenConfigMenuForPlayer(int const viewIndex, int const 
     }
 }
 
-static int8_t G_GetWeaponRepeatDirection(int const playerNum, bool const nextHeld, bool const prevHeld)
-{
-    if ((unsigned) playerNum >= MAXPLAYERS)
-        return 0;
-
-    auto &repeatDir = g_splitScreenWeaponRepeatDir[playerNum];
-    auto &repeatDelay = g_splitScreenWeaponRepeatDelay[playerNum];
-    int8_t const requestedDir = nextHeld == prevHeld ? 0 : (nextHeld ? 1 : -1);
-
-    if (requestedDir == 0)
-    {
-        repeatDir = 0;
-        repeatDelay = 0;
-        return 0;
-    }
-
-    if (repeatDir != requestedDir)
-    {
-        repeatDir = requestedDir;
-        repeatDelay = WEAPON_REPEAT_INITIAL_DELAY;
-        return requestedDir;
-    }
-
-    if (repeatDelay > 0)
-    {
-        --repeatDelay;
-        return 0;
-    }
-
-    repeatDelay = WEAPON_REPEAT_INTERVAL;
-    return requestedDir;
-}
-
 static int16_t G_ScaleAxisToVelocity(int16_t const value, int const maxValue)
 {
     if (!value)
@@ -1044,8 +1007,6 @@ static void G_ClearSplitScreenPadInput(int const playerNum)
     memset(g_splitScreenPrevAxisActive[playerNum], 0, sizeof(g_splitScreenPrevAxisActive[playerNum]));
     memset(g_splitScreenRunTriggerBaselineSet[playerNum], 0, sizeof(g_splitScreenRunTriggerBaselineSet[playerNum]));
     g_splitScreenPadConnected[playerNum] = 0;
-    g_splitScreenWeaponRepeatDir[playerNum] = 0;
-    g_splitScreenWeaponRepeatDelay[playerNum] = 0;
     g_splitScreenWeaponPulseDir[playerNum] = 0;
     g_splitScreenWeaponPulseFrames[playerNum] = 0;
     g_splitScreenAimLastTicks[playerNum] = 0;
@@ -1059,8 +1020,6 @@ static void G_FreezeSplitScreenPadInput(int const playerNum, gamepadstate_t cons
 
     g_splitScreenLocalInputs[playerNum] = {};
     g_splitScreenPadConnected[playerNum] = 0;
-    g_splitScreenWeaponRepeatDir[playerNum] = 0;
-    g_splitScreenWeaponRepeatDelay[playerNum] = 0;
     g_splitScreenWeaponPulseDir[playerNum] = 0;
     g_splitScreenWeaponPulseFrames[playerNum] = 0;
     g_splitScreenAimLastTicks[playerNum] = 0;
@@ -1134,8 +1093,6 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
     if ((pPlayer->gm & (MODE_MENU | MODE_TYPE)) != 0 || ud.pause_on)
     {
         G_UpdatePreviousGamepadState(playerNum, state);
-        g_splitScreenWeaponRepeatDir[playerNum] = 0;
-        g_splitScreenWeaponRepeatDelay[playerNum] = 0;
         g_splitScreenWeaponPulseDir[playerNum] = 0;
         g_splitScreenWeaponPulseFrames[playerNum] = 0;
         g_splitScreenAimLastTicks[playerNum] = 0;
@@ -1146,9 +1103,9 @@ static void G_BuildSplitScreenPadInput(int const playerNum, int const controller
     bool const altFireHeld    = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Alt_Fire);
     bool const firePressed    = G_GamepadFunctionPressed(playerNum, controllerProfile, state, gamefunc_Fire);
     bool const altFirePress   = G_GamepadFunctionPressed(playerNum, controllerProfile, state, gamefunc_Alt_Fire);
-    bool const nextWeaponHeld = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Next_Weapon);
-    bool const prevWeaponHeld = G_GamepadFunctionHeld(controllerProfile, state, gamefunc_Previous_Weapon);
-    int8_t const weaponCycleDirection = G_GetWeaponRepeatDirection(playerNum, nextWeaponHeld, prevWeaponHeld);
+    bool const nextWeaponPressed = G_GamepadFunctionPressed(playerNum, controllerProfile, state, gamefunc_Next_Weapon);
+    bool const prevWeaponPressed = G_GamepadFunctionPressed(playerNum, controllerProfile, state, gamefunc_Previous_Weapon);
+    int8_t const weaponCycleDirection = nextWeaponPressed == prevWeaponPressed ? 0 : (nextWeaponPressed ? 1 : -1);
     if (weaponCycleDirection != 0)
     {
         g_splitScreenWeaponPulseDir[playerNum] = weaponCycleDirection;

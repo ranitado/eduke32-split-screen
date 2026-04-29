@@ -78,6 +78,7 @@ static void Menu_DrawReplayLevelDetails(vec2_t const origin);
 static int32_t Menu_MoveReplayLevelSelection(int32_t direction);
 static int32_t Menu_CanUseReplayLevels(void);
 static void Menu_RecordReplayLevelReached(int32_t volumeIndex, int32_t levelIndex);
+static int32_t Menu_GetReplayLevelReached(int32_t volumeIndex);
 static void Menu_RecordReplayLevelProgress(int32_t volumeIndex, int32_t levelIndex, int32_t secrets, int32_t maxSecrets);
 static void Menu_RecordReplayLevelCompleted(int32_t volumeIndex, int32_t levelIndex);
 static void Menu_SelectFirstEpisodeOfCurrentContent(void);
@@ -6053,6 +6054,9 @@ static void Menu_GetCurrentCampaignSecrets(int32_t * const secrets, int32_t * co
         }
     }
 
+    if (maxFound > 0)
+        found = min<int32_t>(found, maxFound);
+
     if (secrets != nullptr)
         *secrets = found;
     if (maxSecrets != nullptr)
@@ -6081,12 +6085,17 @@ int32_t M_GetReplayCampaignTotalSecrets(void)
             int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
             int32_t played = g_replayLevelPlayed[progressIndex];
             int32_t levelSecrets = g_replayLevelCampaignSecrets[progressIndex];
+            int32_t levelMaxSecrets = g_replayLevelCampaignMaxSecrets[progressIndex];
 
             if (progressIndex == currentIndex)
             {
                 played = 1;
                 levelSecrets = max<int32_t>(levelSecrets, currentLevelSecrets);
+                levelMaxSecrets = max<int32_t>(levelMaxSecrets, currentLevelMaxSecrets);
             }
+
+            if (levelMaxSecrets > 0)
+                levelSecrets = min<int32_t>(levelSecrets, levelMaxSecrets);
 
             if (played)
                 found += max<int32_t>(levelSecrets, 0);
@@ -6102,6 +6111,7 @@ int32_t M_GetReplayCampaignLevelsCompleted(void)
         M_ResetReplayCampaignProgress();
 
     int32_t completed = 0;
+    int32_t counted[MAXVOLUMES * MAXLEVELS] = {};
 
     for (int32_t volumeIndex = 0; volumeIndex < g_volumeCnt; ++volumeIndex)
     {
@@ -6112,7 +6122,28 @@ int32_t M_GetReplayCampaignLevelsCompleted(void)
 
             int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
             if (g_replayLevelCompleted[progressIndex])
+            {
+                counted[progressIndex] = 1;
                 ++completed;
+            }
+        }
+    }
+
+    for (int32_t volumeIndex = 0; volumeIndex < g_volumeCnt; ++volumeIndex)
+    {
+        int32_t const reachedLevel = Menu_GetReplayLevelReached(volumeIndex);
+        if (reachedLevel <= 0)
+            continue;
+
+        for (int32_t levelIndex = 0; levelIndex < reachedLevel; ++levelIndex)
+        {
+            int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
+
+            if (counted[progressIndex] || g_mapInfo[progressIndex].filename == nullptr)
+                continue;
+
+            counted[progressIndex] = 1;
+            ++completed;
         }
     }
 
@@ -6154,10 +6185,15 @@ static int32_t Menu_ReadReplayProgressMetadataPath(char const * const fn)
         if ((fieldCount == 6 || fieldCount == 5) && played && (unsigned)volumeIndex < MAXVOLUMES && (unsigned)levelIndex < MAXLEVELS)
         {
             int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
+            int32_t const clampedMaxSecrets = max<int32_t>(maxSecrets, 0);
+            int32_t clampedSecrets = max<int32_t>(secrets, 0);
+            if (clampedMaxSecrets > 0)
+                clampedSecrets = min<int32_t>(clampedSecrets, clampedMaxSecrets);
+
             g_replayLevelPlayed[progressIndex] = 1;
             g_replayLevelCompleted[progressIndex] = completed != 0;
-            g_replayLevelCampaignSecrets[progressIndex] = max<int32_t>(secrets, 0);
-            g_replayLevelCampaignMaxSecrets[progressIndex] = max<int32_t>(maxSecrets, 0);
+            g_replayLevelCampaignSecrets[progressIndex] = clampedSecrets;
+            g_replayLevelCampaignMaxSecrets[progressIndex] = clampedMaxSecrets;
             Menu_RecordReplayLevelReached(volumeIndex, levelIndex);
         }
     }
@@ -6209,10 +6245,14 @@ void M_WriteReplayProgressMetadata(char const * const fn)
             if (!g_replayLevelPlayed[progressIndex])
                 continue;
 
+            int32_t writeMaxSecrets = max<int32_t>(g_replayLevelCampaignMaxSecrets[progressIndex], 0);
+            int32_t writeSecrets = max<int32_t>(g_replayLevelCampaignSecrets[progressIndex], 0);
+            if (writeMaxSecrets > 0)
+                writeSecrets = min<int32_t>(writeSecrets, writeMaxSecrets);
+
             Bfprintf(fp, "level %d %d %d %d %d %d\n",
                      volumeIndex, levelIndex, 1, g_replayLevelCompleted[progressIndex] != 0,
-                     max<int32_t>(g_replayLevelCampaignSecrets[progressIndex], 0),
-                     max<int32_t>(g_replayLevelCampaignMaxSecrets[progressIndex], 0));
+                     writeSecrets, writeMaxSecrets);
         }
     }
 
@@ -6291,9 +6331,14 @@ static void Menu_RecordReplayLevelProgress(int32_t const volumeIndex, int32_t co
     Menu_ResetReplayCampaignProgressIfNeeded();
 
     int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
+    int32_t clampedMaxSecrets = max<int32_t>(maxSecrets, 0);
+    int32_t clampedSecrets = max<int32_t>(secrets, 0);
+    if (clampedMaxSecrets > 0)
+        clampedSecrets = min<int32_t>(clampedSecrets, clampedMaxSecrets);
+
     g_replayLevelPlayed[progressIndex] = 1;
-    g_replayLevelCampaignSecrets[progressIndex] = max<int32_t>(g_replayLevelCampaignSecrets[progressIndex], secrets);
-    g_replayLevelCampaignMaxSecrets[progressIndex] = max<int32_t>(g_replayLevelCampaignMaxSecrets[progressIndex], maxSecrets);
+    g_replayLevelCampaignSecrets[progressIndex] = max<int32_t>(g_replayLevelCampaignSecrets[progressIndex], clampedSecrets);
+    g_replayLevelCampaignMaxSecrets[progressIndex] = max<int32_t>(g_replayLevelCampaignMaxSecrets[progressIndex], clampedMaxSecrets);
 
     Menu_RecordReplayLevelReached(volumeIndex, levelIndex);
 }
@@ -6325,10 +6370,15 @@ static int32_t Menu_GetReplayLevelProgress(int32_t const volumeIndex, int32_t co
     Menu_ResetReplayCampaignProgressIfNeeded();
 
     int32_t const progressIndex = volumeIndex * MAXLEVELS + levelIndex;
+    int32_t storedSecrets = g_replayLevelCampaignSecrets[progressIndex];
+    int32_t storedMaxSecrets = g_replayLevelCampaignMaxSecrets[progressIndex];
+    if (storedMaxSecrets > 0)
+        storedSecrets = min<int32_t>(storedSecrets, storedMaxSecrets);
+
     if (secrets != nullptr)
-        *secrets = g_replayLevelCampaignSecrets[progressIndex];
+        *secrets = storedSecrets;
     if (maxSecrets != nullptr)
-        *maxSecrets = g_replayLevelCampaignMaxSecrets[progressIndex];
+        *maxSecrets = storedMaxSecrets;
 
     return g_replayLevelPlayed[progressIndex];
 }

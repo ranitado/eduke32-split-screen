@@ -2848,14 +2848,21 @@ static int32_t G_GetBonusSecretRooms(void)
         return g_player[myconnectindex].ps->secret_rooms;
 
     int32_t secretRooms = 0;
+    int32_t maxSecretRooms = 0;
 
     for (int32_t playerIndex = 0, playerCount = G_GetBonusPlayerCount(); playerIndex < playerCount; ++playerIndex)
     {
         DukePlayer_t const * const pPlayer = g_player[G_GetBonusPlayer(playerIndex)].ps;
 
         if (pPlayer != nullptr)
+        {
             secretRooms += pPlayer->secret_rooms;
+            maxSecretRooms = max<int32_t>(maxSecretRooms, pPlayer->max_secret_rooms);
+        }
     }
+
+    if (maxSecretRooms > 0)
+        secretRooms = min<int32_t>(secretRooms, maxSecretRooms);
 
     return secretRooms;
 }
