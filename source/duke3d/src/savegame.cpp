@@ -146,6 +146,38 @@ uint16_t g_nummenusaves;
 static menusave_t * g_internalsaves;
 static uint16_t g_numinternalsaves;
 
+static int32_t sv_loadheader_inspect(buildvfs_kfd fil, savehead_t * const h)
+{
+    if (kread(fil, h, sizeof(savehead_t)) != sizeof(savehead_t))
+    {
+        Bmemset(h->headerstr, 0, sizeof(h->headerstr));
+        return -1;
+    }
+
+    if (Bmemcmp(h->headerstr, "E32SAVEGAME", 11))
+    {
+        Bmemset(h->headerstr, 0, sizeof(h->headerstr));
+        return -2;
+    }
+
+    if (h->majorver != SV_MAJOR_VER || h->minorver != SV_MINOR_VER || h->bytever != BYTEVERSION || h->userbytever > ud.userbytever)
+    {
+        if (h->majorver == SV_MAJOR_VER && h->minorver == SV_MINOR_VER)
+            return 1;
+
+        Bmemset(h->headerstr, 0, sizeof(h->headerstr));
+        return -3;
+    }
+
+    if (h->getPtrSize() != sizeof(intptr_t))
+    {
+        Bmemset(h->headerstr, 0, sizeof(h->headerstr));
+        return -4;
+    }
+
+    return 0;
+}
+
 #ifdef SPLITSCREEN_MOD_HACKS
 static char const s_splitScreenSaveDir[] = "saves";
 static char const s_splitScreenSaveDirPrefix[] = "saves/";
@@ -181,7 +213,7 @@ static void ReadSaveGameHeaders_CACHE1D(BUILDVFS_FIND_REC *f, char const * const
 
         msv.brief.isExt = 0;
 
-        int32_t k = sv_loadheader(fil, 0, &h);
+        int32_t k = sv_loadheader_inspect(fil, &h);
         if (k)
         {
             if (k < 0)
@@ -336,7 +368,7 @@ int32_t G_LoadSaveHeaderNew(char const *fn, savehead_t *saveh)
     if (fil == buildvfs_kfd_invalid)
         return -1;
 
-    int32_t i = sv_loadheader(fil, 0, saveh);
+    int32_t i = sv_loadheader_inspect(fil, saveh);
     if (i < 0)
         goto corrupt;
 
