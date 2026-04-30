@@ -838,6 +838,49 @@ static int32_t primaryGameControllerIndex;
 static int32_t numGameControllers;
 static bool gameControllerDBLoaded;
 
+static char const *joySafeControllerNameForIndex(int32_t const index)
+{
+    char const *name = nullptr;
+
+    if (SDL_IsGameController(index))
+        name = SDL_GameControllerNameForIndex(index);
+    else
+        name = SDL_JoystickNameForIndex(index);
+
+    return (name != nullptr && name[0] != '\0') ? name : "Unknown controller";
+}
+
+static char const *joySafeControllerName(SDL_GameController *const gameController)
+{
+    char const *name = gameController != nullptr ? SDL_GameControllerName(gameController) : nullptr;
+    return (name != nullptr && name[0] != '\0') ? name : "Unknown controller";
+}
+
+static char const *joySafeControllerSerial(SDL_GameController *const gameController)
+{
+# if SDL_VERSION_ATLEAST(2, 0, 14)
+    if (EDUKE32_SDL_LINKED_PREREQ(linked, 2, 0, 14))
+    {
+        char const *serial = gameController != nullptr ? SDL_GameControllerGetSerial(gameController) : nullptr;
+        return (serial != nullptr && serial[0] != '\0') ? serial : nullptr;
+    }
+# endif
+
+    (void)gameController;
+    return nullptr;
+}
+
+static void joyFormatControllerName(char *const buffer, size_t const bufferSize, SDL_GameController *const gameController)
+{
+    char const *name = joySafeControllerName(gameController);
+    char const *serial = joySafeControllerSerial(gameController);
+
+    if (serial != nullptr)
+        Bsnprintf(buffer, bufferSize, "%s [%s]", name, serial);
+    else
+        Bsnprintf(buffer, bufferSize, "%s", name);
+}
+
 static void LoadSDLControllerDB()
 {
     if (gameControllerDBLoaded)
@@ -959,12 +1002,7 @@ void joyScanDevices()
 
         for (int i = 0; i < numjoysticks; i++)
         {
-#if SDL_MAJOR_VERSION >= 2
-            if (SDL_IsGameController(i))
-                Bstrncpyz(name, SDL_GameControllerNameForIndex(i), sizeof(name));
-            else
-#endif
-                Bstrncpyz(name, SDL_JoystickNameForIndex(i), sizeof(name));
+            Bstrncpyz(name, joySafeControllerNameForIndex(i), sizeof(name));
 
             VLOG_F(LOG_INPUT, "  %d. %s", i + 1, name);
         }
@@ -976,16 +1014,43 @@ void joyScanDevices()
 
             auto *openedController = SDL_GameControllerOpen(i);
             if (!openedController)
+            {
+                VLOG_F(LOG_INPUT, "  %d. failed to open controller: %s", i + 1, SDL_GetError());
                 continue;
+            }
 
             if (numGameControllers >= MAX_LOCAL_GAMEPADS)
             {
+                joyFormatControllerName(name, sizeof(name), openedController);
+                VLOG_F(LOG_INPUT, "  %d. ignored extra controller beyond local limit: %s", i + 1, name);
+                SDL_GameControllerClose(openedController);
+                continue;
+            }
+
+            SDL_JoystickID const instanceId = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(openedController));
+            bool duplicateInstance = false;
+
+            for (int gamepadIndex = 0; gamepadIndex < numGameControllers; ++gamepadIndex)
+            {
+                if (gameControllerInstanceIds[gamepadIndex] == instanceId)
+                {
+                    duplicateInstance = true;
+                    break;
+                }
+            }
+
+            if (duplicateInstance)
+            {
+                joyFormatControllerName(name, sizeof(name), openedController);
+                VLOG_F(LOG_INPUT, "  %d. ignored duplicate controller instance %d: %s", i + 1, instanceId, name);
                 SDL_GameControllerClose(openedController);
                 continue;
             }
 
             gameControllers[numGameControllers] = openedController;
-            gameControllerInstanceIds[numGameControllers] = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(openedController));
+            gameControllerInstanceIds[numGameControllers] = instanceId;
+            joyFormatControllerName(name, sizeof(name), openedController);
+            VLOG_F(LOG_INPUT, "  %d. opened as pad %d, instance %d: %s", i + 1, numGameControllers + 1, instanceId, name);
             numGameControllers++;
 
             if (controller)
@@ -994,13 +1059,7 @@ void joyScanDevices()
             controller = openedController;
             primaryGameControllerIndex = numGameControllers - 1;
 
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-                if (EDUKE32_SDL_LINKED_PREREQ(linked, 2, 0, 14))
-                    Bsnprintf(name, sizeof(name), "%s [%s]", SDL_GameControllerName(controller), SDL_GameControllerGetSerial(controller));
-                else
-#endif
-                    Bsnprintf(name, sizeof(name), "%s", SDL_GameControllerName(controller));
-
+                joyFormatControllerName(name, sizeof(name), controller);
                 VLOG_F(LOG_INPUT, "Using controller: %s.", name);
 
                 joystick.flags      = 0;
@@ -3038,13 +3097,7 @@ void joySetPrimaryGamepadIndex(int32_t const gamepadIndex)
         Bmemset(joystick.pAxis, 0, joystick.numAxes * sizeof(int32_t));
 
     char name[128];
-# if SDL_VERSION_ATLEAST(2, 0, 14)
-    if (EDUKE32_SDL_LINKED_PREREQ(linked, 2, 0, 14))
-        Bsnprintf(name, sizeof(name), "%s [%s]", SDL_GameControllerName(controller), SDL_GameControllerGetSerial(controller));
-    else
-# endif
-        Bsnprintf(name, sizeof(name), "%s", SDL_GameControllerName(controller));
-
+    joyFormatControllerName(name, sizeof(name), controller);
     VLOG_F(LOG_INPUT, "Using controller: %s.", name);
 #else
     UNREFERENCED_PARAMETER(gamepadIndex);

@@ -168,7 +168,7 @@ static int32_t G_GetSplitScreenWeaponYOffsetPixels(int32_t const playerNum)
     if (viewport.width < xdim && viewport.height < ydim)
         return -7;
 
-    return viewport.height < ydim ? -22 : 0;
+    return viewport.height < ydim ? -37 : 0;
 }
 
 static int32_t G_GetSplitScreenSmallViewportRpgXOffsetPixels(int32_t const playerNum)
@@ -178,6 +178,15 @@ static int32_t G_GetSplitScreenSmallViewportRpgXOffsetPixels(int32_t const playe
         return 0;
 
     return (viewport.width < xdim && viewport.height < ydim) ? 8 : 0;
+}
+
+static int32_t G_GetSplitScreenHalfViewportRpgXOffsetPixels(int32_t const playerNum)
+{
+    splitscreen_viewport_t viewport {};
+    if (G_GetSplitScreenViewportForPlayer(playerNum, &viewport) != 0)
+        return 0;
+
+    return (viewport.width >= xdim && viewport.height < ydim) ? -22 : 0;
 }
 
 static int32_t G_GetRpgAspectXOffsetPixels(int32_t const playerNum, int32_t const fourThreeOffset, int32_t const widescreenOffset)
@@ -2064,7 +2073,7 @@ static int P_DisplayFist(int const fistShade)
 }
 
 #define DRAWEAP_CENTER 262144
-#define weapsc(sc) scale(sc, ud.weaponscale, 100)
+#define weapsc(sc) scale(sc, G_GetDisplayWeaponScalePercent(), 100)
 
 static int32_t g_dts_yadd;
 
@@ -2086,6 +2095,19 @@ static int32_t G_GetRpgHudTile(void)
 #else
     return RPGGUN;
 #endif
+}
+
+static int32_t G_GetDisplayWeaponScalePercent(void)
+{
+    int32_t weaponScale = ud.weaponscale;
+
+#ifdef SPLITSCREEN_MOD_HACKS
+    splitscreen_viewport_t viewport {};
+    if (G_GetSplitScreenViewportForPlayer(screenpeek, &viewport) == 0 && viewport.width >= xdim && viewport.height < ydim)
+        weaponScale = scale(weaponScale, 75, 100);
+#endif
+
+    return weaponScale;
 }
 
 static void G_DrawTileScaled(int drawX, int drawY, int tileNum, int drawShade, int drawBits, int drawPal, int uniqueID = 0)
@@ -2601,7 +2623,8 @@ void P_DisplayWeapon(void)
 
                 if (G_HaveSplitScreen())
                 {
-                    int const widescreenOffset = 8 + G_GetSplitScreenSmallViewportRpgXOffsetPixels(screenpeek);
+                    int const widescreenOffset = 8 + G_GetSplitScreenSmallViewportRpgXOffsetPixels(screenpeek)
+                                                   + G_GetSplitScreenHalfViewportRpgXOffsetPixels(screenpeek);
                     weaponX += G_GetRpgAspectXOffsetPixels(screenpeek, widescreenOffset + 60, widescreenOffset);
                     weaponYOffset -= 6;
                 }

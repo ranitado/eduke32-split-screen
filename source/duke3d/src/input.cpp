@@ -344,6 +344,11 @@ static bool I_MenuKeyboardMouseActionActive(uint32_t const action, bool const he
     return (g_menuKeyboardMouseClearActions & action) == 0;
 }
 
+static bool I_ShouldSuppressMenuBackInput(void)
+{
+    return (int32_t)timerGetTicks() < g_menuReturnSuppressUntilClock;
+}
+
 static void I_ClearMenuGamepadInput(void)
 {
     g_menuGamepadClearButtons |= g_menuGamepadLastButtons;
@@ -457,8 +462,11 @@ static UserInput *I_GetUserInput(void)
     I_ApplyMenuGamepadButtonFilter(info.b_return, buttons, CONTROLLER_BUTTON_B);
     I_ApplyMenuGamepadButtonFilter(info.b_escape, buttons, CONTROLLER_BUTTON_START);
 
-    if ((int32_t)timerGetTicks() < g_menuReturnSuppressUntilClock)
+    if (I_ShouldSuppressMenuBackInput())
+    {
         info.b_return = false;
+        info.b_escape = false;
+    }
 
     if (info.b_advance)
         g_menuLastAdvanceGamepadIndex = gamepadAdvanceActive ? advanceGamepadIndex : -1;
@@ -510,15 +518,15 @@ void I_ClearAllInput(void)
 
 void I_ClearLast(void)
 {
-    bool const consumedReturn = g_menuUserInput.b_return != 0;
+    bool const consumedBack = g_menuUserInput.b_return != 0 || g_menuUserInput.b_escape != 0;
     UserInput clearInfo {};
     clearInfo.dir = g_menuUserInput.dir;
     clearInfo.b_advance = g_menuUserInput.b_advance;
     CONTROL_ClearUserInput(&clearInfo);
     I_ClearMenuKeyboardMouseInput();
     I_ClearMenuGamepadInput();
-    if (consumedReturn)
-        g_menuReturnSuppressUntilClock = (int32_t)timerGetTicks() + 180;
+    if (consumedBack)
+        g_menuReturnSuppressUntilClock = (int32_t)timerGetTicks() + 80;
     g_menuUserInput = {};
     g_menuUserInputClock = -1;
 }

@@ -1422,21 +1422,42 @@ static void G_UpdateSplitScreenJoinInputs(void)
     g_splitScreenKeyboardMenuPrevActions = keyboardActions;
 
     int const connectedGamepads = min<int>(joyGetConnectedGamepadCount(), MAX_LOCAL_PLAYERS);
+    bool suppressUnassignedStartJoin = false;
+    bool startPressedByGamepad[MAX_LOCAL_PLAYERS] {};
+    int assignedPlayerByGamepad[MAX_LOCAL_PLAYERS] {};
+    uint32_t gamepadButtons[MAX_LOCAL_PLAYERS] {};
 
     for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_PLAYERS; ++gamepadIndex)
     {
         gamepadstate_t state {};
-        uint32_t const buttons = gamepadIndex < connectedGamepads && joyGetGamepadState(gamepadIndex, &state) == 0 && state.connected
+        gamepadButtons[gamepadIndex] = gamepadIndex < connectedGamepads && joyGetGamepadState(gamepadIndex, &state) == 0 && state.connected
             ? state.buttons
             : 0;
 
-        bool const startPressed = G_GamepadButtonPressed(buttons, g_splitScreenJoinPrevButtons[gamepadIndex], GP_START);
-        int const assignedPlayer = G_GetPlayerForGamepadIndex(gamepadIndex);
+        startPressedByGamepad[gamepadIndex] = G_GamepadButtonPressed(gamepadButtons[gamepadIndex], g_splitScreenJoinPrevButtons[gamepadIndex], GP_START);
+        assignedPlayerByGamepad[gamepadIndex] = G_GetPlayerForGamepadIndex(gamepadIndex);
+        if (startPressedByGamepad[gamepadIndex]
+            && assignedPlayerByGamepad[gamepadIndex] >= 0
+            && (unsigned)assignedPlayerByGamepad[gamepadIndex] < MAX_LOCAL_PLAYERS
+            && G_IsSplitScreenPlayerActive(assignedPlayerByGamepad[gamepadIndex]))
+            suppressUnassignedStartJoin = true;
+    }
+
+    for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_PLAYERS; ++gamepadIndex)
+    {
+        gamepadstate_t state {};
+        if (gamepadIndex < connectedGamepads)
+            joyGetGamepadState(gamepadIndex, &state);
+
+        uint32_t const buttons = gamepadButtons[gamepadIndex];
+        bool const startPressed = startPressedByGamepad[gamepadIndex];
+        int const assignedPlayer = assignedPlayerByGamepad[gamepadIndex];
         int const playerNum = startPressed ? G_GetJoinPlayerForGamepadIndex(gamepadIndex) : assignedPlayer;
         bool const playerIsActive = playerNum >= 0 && (unsigned)playerNum < MAX_LOCAL_PLAYERS && G_IsSplitScreenPlayerActive(playerNum);
         bool const canReassignDisconnectedPlayer = canHandleDropIn && startPressed && playerIsActive && assignedPlayer < 0 && !G_PlayerHasConnectedAssignedInput(playerNum);
+        bool const likelyDuplicateUnassignedStart = suppressUnassignedStartJoin && startPressed && assignedPlayer < 0 && !playerIsActive;
 
-        if ((canReassignDisconnectedPlayer || (canJoin && !playerIsActive)) && startPressed && playerNum >= 0 && (unsigned)playerNum < MAX_LOCAL_PLAYERS)
+        if (!likelyDuplicateUnassignedStart && (canReassignDisconnectedPlayer || (canJoin && !playerIsActive)) && startPressed && playerNum >= 0 && (unsigned)playerNum < MAX_LOCAL_PLAYERS)
         {
             if (assignedPlayer < 0)
             {
