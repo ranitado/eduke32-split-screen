@@ -834,6 +834,18 @@ static uint16_t gameControllerRumbleLow[MAX_LOCAL_GAMEPADS];
 static uint16_t gameControllerRumbleHigh[MAX_LOCAL_GAMEPADS];
 static uint16_t gameControllerRumbleTime[MAX_LOCAL_GAMEPADS];
 static uint32_t gameControllerRumbleZeroTime[MAX_LOCAL_GAMEPADS];
+struct gameControllerIdentity_t
+{
+    char name[128];
+    char guid[64];
+    char serial[128];
+    uint16_t vendor;
+    uint16_t product;
+    uint16_t version;
+    int32_t playerIndex;
+    int32_t type;
+};
+static gameControllerIdentity_t gameControllerIdentities[MAX_LOCAL_GAMEPADS];
 static int32_t primaryGameControllerIndex;
 static int32_t numGameControllers;
 static bool gameControllerDBLoaded;
@@ -879,6 +891,75 @@ static void joyFormatControllerName(char *const buffer, size_t const bufferSize,
         Bsnprintf(buffer, bufferSize, "%s [%s]", name, serial);
     else
         Bsnprintf(buffer, bufferSize, "%s", name);
+}
+
+static int32_t joyIsRunningUnderSteamCompat(void)
+{
+    return getenv("STEAM_COMPAT_DATA_PATH") != nullptr || getenv("STEAM_COMPAT_CLIENT_INSTALL_PATH") != nullptr ||
+           getenv("Steam_COMPAT_CLIENT_INSTALL_PATH") != nullptr || getenv("SteamDeck") != nullptr;
+}
+
+static void joyApplySteamCompatControllerHints(void)
+{
+    if (!joyIsRunningUnderSteamCompat())
+        return;
+
+#if SDL_MAJOR_VERSION >= 2
+# if defined SDL_HINT_DIRECTINPUT_ENABLED
+    SDL_SetHint(SDL_HINT_DIRECTINPUT_ENABLED, "0");
+    VLOG_F(LOG_INPUT, "Steam/Proton detected; DirectInput controllers disabled to avoid duplicate pads.");
+# endif
+#endif
+}
+
+static void joyGetControllerIdentity(SDL_GameController *const gameController, gameControllerIdentity_t *const identity)
+{
+    Bmemset(identity, 0, sizeof(*identity));
+    identity->playerIndex = -1;
+    identity->type = SDL_JOYSTICK_TYPE_UNKNOWN;
+
+    if (gameController == nullptr)
+        return;
+
+    Bstrncpyz(identity->name, joySafeControllerName(gameController), sizeof(identity->name));
+    Bstrncpyz(identity->serial, joySafeControllerSerial(gameController) != nullptr ? joySafeControllerSerial(gameController) : "", sizeof(identity->serial));
+
+    SDL_Joystick *const joystick = SDL_GameControllerGetJoystick(gameController);
+    if (joystick == nullptr)
+        return;
+
+    SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), identity->guid, sizeof(identity->guid));
+    identity->vendor = SDL_GameControllerGetVendor(gameController);
+    identity->product = SDL_GameControllerGetProduct(gameController);
+    identity->version = SDL_GameControllerGetProductVersion(gameController);
+    identity->playerIndex = SDL_JoystickGetPlayerIndex(joystick);
+    identity->type = SDL_JoystickGetType(joystick);
+}
+
+static int32_t joyControllerIdentityMatches(gameControllerIdentity_t const &a, gameControllerIdentity_t const &b)
+{
+    if (a.guid[0] == '\0' || b.guid[0] == '\0' || Bstrcasecmp(a.guid, b.guid) != 0)
+        return 0;
+
+    if (a.vendor != b.vendor || a.product != b.product || a.version != b.version || a.type != b.type)
+        return 0;
+
+    if (a.serial[0] != '\0' && b.serial[0] != '\0')
+        return Bstrcasecmp(a.serial, b.serial) == 0;
+
+    if (a.playerIndex >= 0 && a.playerIndex == b.playerIndex)
+        return 1;
+
+    return 0;
+}
+
+static int32_t joyFindDuplicateController(gameControllerIdentity_t const &identity)
+{
+    for (int gamepadIndex = 0; gamepadIndex < numGameControllers; ++gamepadIndex)
+        if (joyControllerIdentityMatches(identity, gameControllerIdentities[gamepadIndex]))
+            return gamepadIndex;
+
+    return -1;
 }
 
 static void LoadSDLControllerDB()
@@ -973,6 +1054,7 @@ void joyScanDevices()
         }
 
         gameControllerInstanceIds[i] = -1;
+        Bmemset(&gameControllerIdentities[i], 0, sizeof(gameControllerIdentities[i]));
         gameControllerRumbleLow[i] = gameControllerRumbleHigh[i] = gameControllerRumbleTime[i] = 0;
         gameControllerRumbleZeroTime[i] = 0;
     }
@@ -1028,6 +1110,8 @@ void joyScanDevices()
             }
 
             SDL_JoystickID const instanceId = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(openedController));
+            gameControllerIdentity_t identity {};
+            joyGetControllerIdentity(openedController, &identity);
             bool duplicateInstance = false;
 
             for (int gamepadIndex = 0; gamepadIndex < numGameControllers; ++gamepadIndex)
@@ -1047,10 +1131,22 @@ void joyScanDevices()
                 continue;
             }
 
+            int32_t const duplicateIdentity = joyFindDuplicateController(identity);
+            if (duplicateIdentity >= 0)
+            {
+                joyFormatControllerName(name, sizeof(name), openedController);
+                VLOG_F(LOG_INPUT, "  %d. ignored duplicate controller identity of pad %d, instance %d: %s guid=%s vid=%04x pid=%04x player=%d",
+                       i + 1, duplicateIdentity + 1, instanceId, name, identity.guid, identity.vendor, identity.product, identity.playerIndex);
+                SDL_GameControllerClose(openedController);
+                continue;
+            }
+
             gameControllers[numGameControllers] = openedController;
             gameControllerInstanceIds[numGameControllers] = instanceId;
+            gameControllerIdentities[numGameControllers] = identity;
             joyFormatControllerName(name, sizeof(name), openedController);
-            VLOG_F(LOG_INPUT, "  %d. opened as pad %d, instance %d: %s", i + 1, numGameControllers + 1, instanceId, name);
+            VLOG_F(LOG_INPUT, "  %d. opened as pad %d, instance %d: %s guid=%s vid=%04x pid=%04x player=%d",
+                   i + 1, numGameControllers + 1, instanceId, name, identity.guid, identity.vendor, identity.product, identity.playerIndex);
             numGameControllers++;
 
             if (controller)
@@ -1223,6 +1319,7 @@ int32_t initinput(void(*hotplugCallback)(void) /*= nullptr*/)
     if ((g_controllerSupportFlags & CONTROLLER_DISABLED) == 0)
     {
 #if SDL_MAJOR_VERSION >= 2
+        joyApplySteamCompatControllerHints();
 # if defined SDL_HINT_DIRECTINPUT_ENABLED
         if (g_controllerSupportFlags & CONTROLLER_NO_DINPUT)
             SDL_SetHint(SDL_HINT_DIRECTINPUT_ENABLED, "0");
@@ -1278,6 +1375,7 @@ void uninitinput(void)
         }
 
         gameControllerInstanceIds[i] = -1;
+        Bmemset(&gameControllerIdentities[i], 0, sizeof(gameControllerIdentities[i]));
         gameControllerRumbleLow[i] = gameControllerRumbleHigh[i] = gameControllerRumbleTime[i] = 0;
         gameControllerRumbleZeroTime[i] = 0;
     }
