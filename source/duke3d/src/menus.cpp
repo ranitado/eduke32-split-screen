@@ -2662,6 +2662,26 @@ static int32_t Menu_ShouldSkipUpdateEntry(char const * const rel)
            Menu_UpdatePathHasSuffix(rel, ".sav") || Menu_UpdatePathHasSuffix(rel, ".log");
 }
 
+static char const *Menu_StripUpdatePackageRoot(char const * const rel)
+{
+    char const * const slash = Bstrchr(rel, '/');
+    if (slash == nullptr)
+        return rel;
+
+    size_t const firstPartLen = slash - rel;
+    char firstPart[BMAX_PATH];
+    if (firstPartLen >= ARRAY_SIZE(firstPart))
+        return rel;
+
+    Bmemcpy(firstPart, rel, firstPartLen);
+    firstPart[firstPartLen] = '\0';
+
+    if (Bstrncasecmp(firstPart, "eduke32-split-screen-", 21) == 0)
+        return slash + 1;
+
+    return rel;
+}
+
 static int32_t Menu_NormalizeUpdateEntryName(char * const out, size_t const outSize, char const * raw)
 {
     if (outSize == 0)
@@ -2675,6 +2695,10 @@ static int32_t Menu_NormalizeUpdateEntryName(char * const out, size_t const outS
         out[pos++] = (*raw == '\\') ? '/' : *raw;
 
     out[pos] = '\0';
+
+    char const * const stripped = Menu_StripUpdatePackageRoot(out);
+    if (stripped != out)
+        Bmemmove(out, stripped, Bstrlen(stripped) + 1);
 
     return !Menu_ShouldSkipUpdateEntry(out);
 }
