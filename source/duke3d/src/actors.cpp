@@ -44,6 +44,11 @@ static FORCE_INLINE int32_t G_ClassicWeaponStayEnabled(void)
     return (g_gametypeFlags[ud.coop] & GAMETYPE_WEAPSTAY) != 0;
 }
 
+static char const *G_GetThrownHandbombPickupName(void)
+{
+    return g_addonNum == ADDON_CARIBBEAN ? "Pineapple" : "Pipe Bomb";
+}
+
 uint8_t g_radiusDmgStatnums[bitmap_size(MAXSTATUS)];
 
 #define DELETE_SPRITE_AND_CONTINUE(KX) do { A_DeleteSprite(KX); goto next_sprite; } while (0)
@@ -5464,7 +5469,7 @@ DETONATEB:
 
                         P_AddAmmo(pPlayer, HANDBOMB_WEAPON, 1);
                         A_PlaySound(DUKE_GET, pPlayer->i);
-                        Bstrcpy(apStrings[QUOTE_RESERVED4], "Pipe Bomb");
+                        Bstrcpy(apStrings[QUOTE_RESERVED4], G_GetThrownHandbombPickupName());
                         P_DoQuote(QUOTE_RESERVED4, pPlayer);
 
                         if ((pPlayer->gotweapon & (1<<HANDBOMB_WEAPON)) == 0 || pSprite->owner == pPlayer->i)

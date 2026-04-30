@@ -180,6 +180,46 @@ static int32_t G_GetSplitScreenSmallViewportRpgXOffsetPixels(int32_t const playe
     return (viewport.width < xdim && viewport.height < ydim) ? 8 : 0;
 }
 
+static int32_t G_GetRpgAspectXOffsetPixels(int32_t const playerNum, int32_t const fourThreeOffset, int32_t const widescreenOffset)
+{
+    int32_t viewportWidth = xdim;
+    int32_t viewportHeight = ydim;
+
+    if (G_HaveSplitScreen() && playerNum >= 0)
+    {
+        splitscreen_viewport_t viewport {};
+        if (G_GetSplitScreenViewportForPlayer(playerNum, &viewport) == 0)
+        {
+            // Half-height split-screen viewports are intentionally extra-wide.
+            // Use the full display aspect for RPG anchoring there, otherwise a
+            // 4:3 display incorrectly receives the 16:9 RPG offset.
+            if (viewport.width < xdim && viewport.height < ydim)
+            {
+                viewportWidth = viewport.width;
+                viewportHeight = viewport.height;
+            }
+        }
+    }
+
+    if (viewportHeight <= 0)
+        return widescreenOffset;
+
+    // The custom RPG art wants a different X anchor depending on viewport shape:
+    // 4:3 needs it farther right, while 16:9 uses the current widescreen-tuned position.
+    int64_t const aspectNumerator = 9ll * viewportWidth - 12ll * viewportHeight;
+    int64_t const aspectDenominator = 4ll * viewportHeight;
+
+    if (aspectNumerator <= 0)
+        return fourThreeOffset;
+
+    if (aspectNumerator >= aspectDenominator)
+        return widescreenOffset;
+
+    return (int32_t)(((int64_t)fourThreeOffset * (aspectDenominator - aspectNumerator)
+                    + (int64_t)widescreenOffset * aspectNumerator
+                    + aspectDenominator / 2) / aspectDenominator);
+}
+
 static int32_t G_GetSplitScreenScopedHudUniqueId(int32_t const uniqueID)
 {
     if (uniqueID <= 0 || !G_HaveSplitScreen())
@@ -2561,12 +2601,13 @@ void P_DisplayWeapon(void)
 
                 if (G_HaveSplitScreen())
                 {
-                    weaponX += G_GetSplitScreenSmallViewportRpgXOffsetPixels(screenpeek);
+                    int const widescreenOffset = 8 + G_GetSplitScreenSmallViewportRpgXOffsetPixels(screenpeek);
+                    weaponX += G_GetRpgAspectXOffsetPixels(screenpeek, widescreenOffset + 60, widescreenOffset);
                     weaponYOffset -= 6;
                 }
                 else
                 {
-                    weaponX += 10;
+                    weaponX += G_GetRpgAspectXOffsetPixels(screenpeek, 68, 18);
                 }
 
                 weaponX -= sintable[(768 + ((*weaponFrame) << 7)) & 2047] >> 11;

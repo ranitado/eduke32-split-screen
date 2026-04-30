@@ -736,6 +736,78 @@ void CONFIG_MapKey(int which, kb_scancode key1, kb_scancode oldkey1, kb_scancode
     }
 }
 
+static bool CONFIG_KeyBindingMatches(int const gameFunc, char const * const key0, char const * const key1)
+{
+    return ud.config.KeyboardKeys[gameFunc][0] == KB_StringToScanCode(key0)
+        && ud.config.KeyboardKeys[gameFunc][1] == KB_StringToScanCode(key1);
+}
+
+static bool CONFIG_KeyBindCommandMatches(char const * const keyName, char const * const commandName)
+{
+    int const key = KB_StringToScanCode(keyName);
+    if (key <= 0 || !CONTROL_KeyIsBound(key))
+        return false;
+
+    return !Bstrcasecmp(CONTROL_KeyBinds[key].cmdstr, commandName);
+}
+
+static void CONFIG_SetKeyboardFunctionKeys(int const gameFunc, char const * const key0, char const * const key1)
+{
+    kb_scancode const oldKey0 = ud.config.KeyboardKeys[gameFunc][0];
+    kb_scancode const oldKey1 = ud.config.KeyboardKeys[gameFunc][1];
+    kb_scancode const newKey0 = KB_StringToScanCode(key0);
+    kb_scancode const newKey1 = KB_StringToScanCode(key1);
+
+    ud.config.KeyboardKeys[gameFunc][0] = newKey0;
+    ud.config.KeyboardKeys[gameFunc][1] = newKey1;
+    CONFIG_MapKey(gameFunc, newKey0, oldKey0, newKey1, oldKey1);
+}
+
+void CONFIG_MigrateModernKeyboardDefaults(void)
+{
+    bool const configHasOldDefaults = CONFIG_KeyBindingMatches(gamefunc_Inventory, "Enter", "KpdEnt")
+        && CONFIG_KeyBindingMatches(gamefunc_Inventory_Left, "[", "")
+        && CONFIG_KeyBindingMatches(gamefunc_Inventory_Right, "]", "")
+        && CONFIG_KeyBindingMatches(gamefunc_Holo_Duke, "H", "")
+        && CONFIG_KeyBindingMatches(gamefunc_Jetpack, "J", "")
+        && CONFIG_KeyBindingMatches(gamefunc_NightVision, "N", "")
+        && CONFIG_KeyBindingMatches(gamefunc_MedKit, "M", "")
+        && CONFIG_KeyBindingMatches(gamefunc_Map_Follow_Mode, "F", "")
+        && CONFIG_KeyBindingMatches(gamefunc_Steroids, "R", "");
+
+    bool const bindsHaveOldDefaults = CONFIG_KeyBindCommandMatches("Enter", "gamefunc_Inventory")
+        && CONFIG_KeyBindCommandMatches("[", "gamefunc_Inventory_Left")
+        && CONFIG_KeyBindCommandMatches("]", "gamefunc_Inventory_Right")
+        && CONFIG_KeyBindCommandMatches("H", "gamefunc_Holo_Duke")
+        && CONFIG_KeyBindCommandMatches("J", "gamefunc_Jetpack")
+        && CONFIG_KeyBindCommandMatches("N", "gamefunc_NightVision")
+        && CONFIG_KeyBindCommandMatches("M", "gamefunc_MedKit")
+        && CONFIG_KeyBindCommandMatches("F", "gamefunc_Map_Follow_Mode")
+        && CONFIG_KeyBindCommandMatches("R", "gamefunc_Steroids");
+
+    if (!configHasOldDefaults && !bindsHaveOldDefaults)
+        return;
+
+    CONTROL_FreeKeyBind(KB_StringToScanCode("["));
+    CONTROL_FreeKeyBind(KB_StringToScanCode("]"));
+    CONTROL_FreeKeyBind(KB_StringToScanCode("H"));
+    CONTROL_FreeKeyBind(KB_StringToScanCode("J"));
+    CONTROL_FreeKeyBind(KB_StringToScanCode("N"));
+    CONTROL_FreeKeyBind(KB_StringToScanCode("M"));
+    CONTROL_FreeKeyBind(KB_StringToScanCode("F"));
+    CONTROL_FreeKeyBind(KB_StringToScanCode("R"));
+
+    CONFIG_SetKeyboardFunctionKeys(gamefunc_Inventory, "R", "Enter");
+    CONFIG_SetKeyboardFunctionKeys(gamefunc_Inventory_Left, "F", "");
+    CONFIG_SetKeyboardFunctionKeys(gamefunc_Inventory_Right, "G", "");
+    CONFIG_SetKeyboardFunctionKeys(gamefunc_Holo_Duke, "", "");
+    CONFIG_SetKeyboardFunctionKeys(gamefunc_Jetpack, "", "");
+    CONFIG_SetKeyboardFunctionKeys(gamefunc_NightVision, "", "");
+    CONFIG_SetKeyboardFunctionKeys(gamefunc_MedKit, "", "");
+    CONFIG_SetKeyboardFunctionKeys(gamefunc_Map_Follow_Mode, "", "");
+    CONFIG_SetKeyboardFunctionKeys(gamefunc_Steroids, "", "");
+}
+
 
 void CONFIG_SetupMouse(void)
 {

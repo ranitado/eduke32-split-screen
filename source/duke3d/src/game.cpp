@@ -7426,6 +7426,7 @@ int app_main(int argc, char const* const* argv)
     OSD_Exec("autoexec.cfg");
 
     CONFIG_SetDefaultKeys(keydefaults, true);
+    CONFIG_MigrateModernKeyboardDefaults();
 
     system_getcvars();
 
@@ -7652,6 +7653,19 @@ MAIN_LOOP_RESTART:
 
         double gameUpdateStartTime = timerGetFractionalTicks();
         auto framecnt = g_frameCounter;
+
+#ifdef SPLITSCREEN_MOD_HACKS
+        if ((myplayer.gm & (MODE_GAME | MODE_MENU | MODE_DEMO)) == MODE_GAME)
+        {
+            int32_t const pendingTics = (int32_t)(totalclock - ototalclock);
+            if (pendingTics > TICRATE * 2)
+            {
+                ototalclock = totalclock;
+                lockclock = totalclock;
+                CAMERACLOCK = (int32_t)totalclock;
+            }
+        }
+#endif
 
         if (((g_netClient || g_netServer) || (myplayer.gm & (MODE_MENU|MODE_DEMO)) == 0) && (int32_t)(totalclock - ototalclock) >= TICSPERFRAME)
         {

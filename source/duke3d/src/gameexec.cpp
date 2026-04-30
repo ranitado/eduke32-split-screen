@@ -991,7 +991,7 @@ static char const *VM_GetWeaponPickupAmmoName(int const weaponNum)
         case SHOTGUN_WEAPON:    return "Shotgun Shells";
         case CHAINGUN_WEAPON:   return "Chaingun Ammo";
         case RPG_WEAPON:        return "RPG Ammo";
-        case HANDBOMB_WEAPON:   return "Pipe Bomb";
+        case HANDBOMB_WEAPON:   return g_addonNum == ADDON_CARIBBEAN ? "Pineapple" : "Pipe Bomb";
         case SHRINKER_WEAPON:   return "Shrinker Ammo";
         case DEVISTATOR_WEAPON: return "Devastator Ammo";
         case TRIPBOMB_WEAPON:   return "Trip Bomb";
@@ -1011,7 +1011,7 @@ static char const *VM_GetWeaponPickupName(int const weaponNum)
         case SHOTGUN_WEAPON:    return "Shotgun";
         case CHAINGUN_WEAPON:   return "Chaingun";
         case RPG_WEAPON:        return "RPG";
-        case HANDBOMB_WEAPON:   return "Pipe Bomb";
+        case HANDBOMB_WEAPON:   return g_addonNum == ADDON_CARIBBEAN ? "Pineapple" : "Pipe Bomb";
         case SHRINKER_WEAPON:   return "Shrinker";
         case DEVISTATOR_WEAPON: return "Devastator";
         case TRIPBOMB_WEAPON:   return "Trip Bomb";

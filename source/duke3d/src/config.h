@@ -32,6 +32,7 @@ void CONFIG_SetDefaults(void);
 void CONFIG_SetupMouse(void);
 void CONFIG_SetupJoystick(void);
 void CONFIG_SetDefaultKeys(const char (*keyptr)[MAXGAMEFUNCLEN], bool lazy=false);
+void CONFIG_MigrateModernKeyboardDefaults(void);
 
 void CONFIG_SetGameControllerDefaults(void);
 void CONFIG_SetGameControllerDefaultsClear(void);

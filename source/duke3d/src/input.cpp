@@ -46,6 +46,7 @@ static int32_t g_menuUserInputClock = -1;
 static int32_t g_menuLastAdvanceGamepadIndex = -1;
 static int32_t g_menuAllGamepadsUnlockClock = 0;
 static int32_t g_menuInputLockPlayer = 0;
+static int32_t g_menuReturnSuppressUntilClock = 0;
 
 enum MenuKeyboardMouseAction_t
 {
@@ -456,6 +457,9 @@ static UserInput *I_GetUserInput(void)
     I_ApplyMenuGamepadButtonFilter(info.b_return, buttons, CONTROLLER_BUTTON_B);
     I_ApplyMenuGamepadButtonFilter(info.b_escape, buttons, CONTROLLER_BUTTON_START);
 
+    if ((int32_t)timerGetTicks() < g_menuReturnSuppressUntilClock)
+        info.b_return = false;
+
     if (info.b_advance)
         g_menuLastAdvanceGamepadIndex = gamepadAdvanceActive ? advanceGamepadIndex : -1;
 
@@ -506,12 +510,15 @@ void I_ClearAllInput(void)
 
 void I_ClearLast(void)
 {
+    bool const consumedReturn = g_menuUserInput.b_return != 0;
     UserInput clearInfo {};
     clearInfo.dir = g_menuUserInput.dir;
     clearInfo.b_advance = g_menuUserInput.b_advance;
     CONTROL_ClearUserInput(&clearInfo);
     I_ClearMenuKeyboardMouseInput();
     I_ClearMenuGamepadInput();
+    if (consumedReturn)
+        g_menuReturnSuppressUntilClock = (int32_t)timerGetTicks() + 180;
     g_menuUserInput = {};
     g_menuUserInputClock = -1;
 }
