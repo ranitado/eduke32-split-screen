@@ -616,11 +616,11 @@ static MenuEntry_t ME_GAMESETUP_ALWAYS_RUN = MAKE_MENUENTRY( "Always run:", &MF_
 
 MAKE_MENU_TOP_ENTRYLINK( "Player Input", MEF_BigOptionsRt, CONTROLS_ASSIGNINPUT, MENU_ASSIGNINPUT );
 
-static char const * const MEOSN_ASSIGNINPUT_PAD[] = { "Pad 1", "Pad 2", "Pad 3", "Pad 4" };
-static char const *MEOSN_ASSIGNINPUT_PLAYER1_INPUT[MAXSPLITSCREENCONTROLLERS + 2];
-static int32_t MEOSV_ASSIGNINPUT_PLAYER1_INPUT[MAXSPLITSCREENCONTROLLERS + 2];
-static char const *MEOSN_ASSIGNINPUT_OTHER_INPUT[MAXSPLITSCREENCONTROLLERS + 2];
-static int32_t MEOSV_ASSIGNINPUT_OTHER_INPUT[MAXSPLITSCREENCONTROLLERS + 2];
+static char const * const MEOSN_ASSIGNINPUT_PAD[] = { "Pad 1", "Pad 2", "Pad 3", "Pad 4", "Pad 5" };
+static char const *MEOSN_ASSIGNINPUT_PLAYER1_INPUT[MAXSPLITSCREENGAMEPADS + 2];
+static int32_t MEOSV_ASSIGNINPUT_PLAYER1_INPUT[MAXSPLITSCREENGAMEPADS + 2];
+static char const *MEOSN_ASSIGNINPUT_OTHER_INPUT[MAXSPLITSCREENGAMEPADS + 2];
+static int32_t MEOSV_ASSIGNINPUT_OTHER_INPUT[MAXSPLITSCREENGAMEPADS + 2];
 static MenuOptionSet_t MEOS_ASSIGNINPUT_PLAYER1_INPUT = MAKE_MENUOPTIONSETDYN( MEOSN_ASSIGNINPUT_PLAYER1_INPUT, MEOSV_ASSIGNINPUT_PLAYER1_INPUT, 1, 0x2 );
 static MenuOptionSet_t MEOS_ASSIGNINPUT_OTHER_INPUT = MAKE_MENUOPTIONSETDYN( MEOSN_ASSIGNINPUT_OTHER_INPUT, MEOSV_ASSIGNINPUT_OTHER_INPUT, 1, 0x2 );
 
@@ -707,7 +707,7 @@ static void Menu_PopulateAssignInputOptions(void)
     MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
     ++optionCount;
 
-    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
+    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENGAMEPADS; ++gamepadIndex)
     {
         MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = MEOSN_ASSIGNINPUT_PAD[gamepadIndex];
         MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
@@ -725,7 +725,7 @@ static void Menu_PopulateAssignInputOptions(void)
     MEOSV_ASSIGNINPUT_OTHER_INPUT[optionCount] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
     ++optionCount;
 
-    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
+    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENGAMEPADS; ++gamepadIndex)
     {
         MEOSN_ASSIGNINPUT_OTHER_INPUT[optionCount] = MEOSN_ASSIGNINPUT_PAD[gamepadIndex];
         MEOSV_ASSIGNINPUT_OTHER_INPUT[optionCount] = SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
@@ -6610,6 +6610,17 @@ static void Menu_PopulateReplayLevelMenu(void)
                     maxSecrets = mapSecretTotal;
             }
 
+            if (volumeIndex == ud.volume_number && levelIndex == ud.level_number)
+            {
+                int32_t currentSecrets = 0, currentMaxSecrets = 0;
+                Menu_GetCurrentCampaignSecrets(&currentSecrets, &currentMaxSecrets);
+
+                secrets = max<int32_t>(secrets, currentSecrets);
+                maxSecrets = max<int32_t>(maxSecrets, currentMaxSecrets);
+                if (maxSecrets > 0)
+                    secrets = min<int32_t>(secrets, maxSecrets);
+            }
+
             Bsnprintf(g_replayLevelNames[entryCount], sizeof(g_replayLevelNames[entryCount]), "%s", localeLookup(mapInfo.name));
 
             g_replayLevelVolumes[entryCount] = volumeIndex;
@@ -7099,14 +7110,14 @@ static void Menu_AssignStartingInputToPlayer(int32_t playerCount)
     playerCount = clamp<int32_t>(playerCount, 1, MAXSPLITSCREENCONTROLLERS);
 
     int32_t const gamepadIndex = I_GetMenuAdvanceGamepadIndex();
-    int32_t const startingInput = (unsigned)gamepadIndex < MAXSPLITSCREENCONTROLLERS
+    int32_t const startingInput = (unsigned)gamepadIndex < MAXSPLITSCREENGAMEPADS
         ? SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex
         : SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
 
     int32_t const assignedPlayer = Menu_GetPlayerWithStartingInput(startingInput, playerCount);
     if (assignedPlayer >= 0)
     {
-        if ((unsigned)gamepadIndex < MAXSPLITSCREENCONTROLLERS && assignedPlayer == myconnectindex)
+        if ((unsigned)gamepadIndex < MAXSPLITSCREENGAMEPADS && assignedPlayer == myconnectindex)
             joySetPrimaryGamepadIndex(gamepadIndex);
         return;
     }
@@ -7126,7 +7137,7 @@ static void Menu_AssignStartingInputToPlayer(int32_t playerCount)
             ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_NONE;
     }
 
-    if ((unsigned)gamepadIndex < MAXSPLITSCREENCONTROLLERS && targetPlayer == myconnectindex)
+    if ((unsigned)gamepadIndex < MAXSPLITSCREENGAMEPADS && targetPlayer == myconnectindex)
         joySetPrimaryGamepadIndex(gamepadIndex);
 
     CONFIG_WriteSetup(0);

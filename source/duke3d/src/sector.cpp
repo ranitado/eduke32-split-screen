@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "duke3d.h"
 #include "input.h"
+#include "menus.h"
 #include "splitscreen.h"
 
 // PRIMITIVE
@@ -3300,6 +3301,7 @@ void P_CheckSectors(int playerNum)
                 pSector->lotag = 0;
                 P_DoQuote(QUOTE_FOUND_SECRET, pPlayer);
                 pPlayer->secret_rooms++;
+                M_RecordReplayCurrentLevelProgress();
                 return;
 
             case UINT16_MAX:

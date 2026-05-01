@@ -1317,10 +1317,7 @@ static int32_t VM_ResetPlayer(int const playerNum, int32_t vmFlags, int32_t cons
             }
             else if (!(resetFlags & 1))
             {
-                Menu_Open(playerNum);
-                KB_ClearKeyDown(sc_Space);
-                I_AdvanceTriggerClear();
-                Menu_Change(MENU_RESETPLAYER);
+                g_player[playerNum].ps->gm = MODE_RESTART;
             }
         }
         else

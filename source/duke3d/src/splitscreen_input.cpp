@@ -51,6 +51,7 @@ constexpr float PRECISION_AIM_SENS_X = .8f;
 constexpr float PRECISION_AIM_SENS_Y = .8f;
 constexpr float AIM_REFERENCE_FPS = 60.f;
 constexpr int MAX_LOCAL_PLAYERS = 4;
+constexpr int MAX_LOCAL_GAMEPADS = MAXSPLITSCREENGAMEPADS;
 
 enum split_config_menu_page_t
 {
@@ -96,8 +97,8 @@ static uint8_t g_splitScreenPadConnected[MAXPLAYERS];
 static int8_t g_splitScreenWeaponQueuedDir[MAXPLAYERS];
 static uint8_t g_splitScreenWeaponHeld[MAXPLAYERS][2];
 static split_config_menu_state_t g_splitScreenConfigMenu[MAXPLAYERS];
-static uint32_t g_splitScreenContinuePrevButtons[MAX_LOCAL_PLAYERS];
-static uint32_t g_splitScreenJoinPrevButtons[MAX_LOCAL_PLAYERS];
+static uint32_t g_splitScreenContinuePrevButtons[MAX_LOCAL_GAMEPADS];
+static uint32_t g_splitScreenJoinPrevButtons[MAX_LOCAL_GAMEPADS];
 static uint32_t g_splitScreenKeyboardMenuPrevActions;
 static uint8_t g_splitScreenJoinSuppressFrames[MAXPLAYERS];
 static uint64_t g_splitScreenAimLastTicks[MAXPLAYERS];
@@ -136,7 +137,7 @@ static int G_GetPlayerForGamepadIndex(int const gamepadIndex)
 
 static bool G_IsGamepadIndexConnected(int const gamepadIndex)
 {
-    if ((unsigned)gamepadIndex >= (unsigned)MAX_LOCAL_PLAYERS || gamepadIndex >= joyGetConnectedGamepadCount())
+    if ((unsigned)gamepadIndex >= (unsigned)MAX_LOCAL_GAMEPADS || gamepadIndex >= joyGetConnectedGamepadCount())
         return false;
 
     gamepadstate_t state {};
@@ -187,14 +188,14 @@ static void G_ClearSplitScreenContinueInputLocal(void)
 {
     int const viewCount = G_GetSplitScreenContinueViewCount();
 
-    for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_PLAYERS; ++gamepadIndex)
+    for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_GAMEPADS; ++gamepadIndex)
         g_splitScreenContinuePrevButtons[gamepadIndex] = 0;
 
     for (int viewIndex = 0; viewIndex < viewCount; ++viewIndex)
     {
         int const playerNum = G_GetSplitScreenPlayer(viewIndex);
         int const gamepadIndex = G_GetGamepadIndexForPlayer(playerNum);
-        if ((unsigned)gamepadIndex >= MAX_LOCAL_PLAYERS)
+        if ((unsigned)gamepadIndex >= MAX_LOCAL_GAMEPADS)
             continue;
 
         gamepadstate_t state {};
@@ -211,7 +212,7 @@ static int32_t G_CheckSplitScreenContinueInputLocal(void)
     {
         int const playerNum = G_GetSplitScreenPlayer(viewIndex);
         int const gamepadIndex = G_GetGamepadIndexForPlayer(playerNum);
-        if ((unsigned)gamepadIndex >= MAX_LOCAL_PLAYERS)
+        if ((unsigned)gamepadIndex >= MAX_LOCAL_GAMEPADS)
             continue;
 
         gamepadstate_t state {};
@@ -1423,13 +1424,13 @@ static void G_UpdateSplitScreenJoinInputs(void)
 
     g_splitScreenKeyboardMenuPrevActions = keyboardActions;
 
-    int const connectedGamepads = min<int>(joyGetConnectedGamepadCount(), MAX_LOCAL_PLAYERS);
+    int const connectedGamepads = min<int>(joyGetConnectedGamepadCount(), MAX_LOCAL_GAMEPADS);
     bool suppressUnassignedStartJoin = false;
-    bool startPressedByGamepad[MAX_LOCAL_PLAYERS] {};
-    int assignedPlayerByGamepad[MAX_LOCAL_PLAYERS] {};
-    uint32_t gamepadButtons[MAX_LOCAL_PLAYERS] {};
+    bool startPressedByGamepad[MAX_LOCAL_GAMEPADS] {};
+    int assignedPlayerByGamepad[MAX_LOCAL_GAMEPADS] {};
+    uint32_t gamepadButtons[MAX_LOCAL_GAMEPADS] {};
 
-    for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_PLAYERS; ++gamepadIndex)
+    for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_GAMEPADS; ++gamepadIndex)
     {
         gamepadstate_t state {};
         gamepadButtons[gamepadIndex] = gamepadIndex < connectedGamepads && joyGetGamepadState(gamepadIndex, &state) == 0 && state.connected
@@ -1445,7 +1446,7 @@ static void G_UpdateSplitScreenJoinInputs(void)
             suppressUnassignedStartJoin = true;
     }
 
-    for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_PLAYERS; ++gamepadIndex)
+    for (int gamepadIndex = 0; gamepadIndex < MAX_LOCAL_GAMEPADS; ++gamepadIndex)
     {
         gamepadstate_t state {};
         if (gamepadIndex < connectedGamepads)
@@ -1552,7 +1553,7 @@ void G_UpdateSplitScreenLocalInputs(void)
 
             gamepadstate_t state {};
             int const gamepadIndex = G_GetGamepadIndexForPlayer(playerNum);
-            if ((unsigned)gamepadIndex < MAX_LOCAL_PLAYERS && joyGetGamepadState(gamepadIndex, &state) == 0)
+            if ((unsigned)gamepadIndex < MAX_LOCAL_GAMEPADS && joyGetGamepadState(gamepadIndex, &state) == 0)
                 G_FreezeSplitScreenPadInput(playerNum, state);
             else
                 G_ClearSplitScreenPadInput(playerNum);
@@ -1580,7 +1581,7 @@ void G_UpdateSplitScreenLocalInputs(void)
 
         int const gamepadIndex = G_GetGamepadIndexForPlayer(playerNum);
         gamepadstate_t state {};
-        if ((unsigned)gamepadIndex < MAX_LOCAL_PLAYERS && joyGetGamepadState(gamepadIndex, &state) == 0)
+        if ((unsigned)gamepadIndex < MAX_LOCAL_GAMEPADS && joyGetGamepadState(gamepadIndex, &state) == 0)
             G_BuildSplitScreenPadInput(playerNum, G_GetControllerProfileForPlayer(playerNum), state);
         else
             G_ClearSplitScreenPadInput(playerNum);

@@ -87,7 +87,7 @@ void I_LockMenuInputToPlayer(int32_t const playerNum, int32_t const milliseconds
     g_menuAllGamepadsUnlockClock = (int32_t)timerGetTicks() + max<int32_t>(milliseconds, 0);
 
     int32_t const lockedGamepadIndex = G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(g_menuInputLockPlayer));
-    if ((unsigned)lockedGamepadIndex < MAXSPLITSCREENCONTROLLERS)
+    if ((unsigned)lockedGamepadIndex < MAXSPLITSCREENGAMEPADS)
         joySetPrimaryGamepadIndex(lockedGamepadIndex);
 }
 
@@ -167,7 +167,7 @@ static void I_UpdateMenuPrimaryGamepadFromActivity(void)
     int32_t const currentPrimaryGamepadIndex = joyGetPrimaryGamepadIndex();
     int32_t activeGamepadIndex = -1;
 
-    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
+    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENGAMEPADS; ++gamepadIndex)
     {
         if (!I_IsMenuGamepadAllowed(gamepadIndex))
             continue;
@@ -198,7 +198,7 @@ static uint32_t I_GetAllowedMenuGamepadButtons(direction * const heldDirection =
         *heldDirectionGamepadIndex = -1;
 
     uint32_t buttons = 0;
-    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
+    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENGAMEPADS; ++gamepadIndex)
     {
         bool const allowed = I_IsMenuGamepadAllowed(gamepadIndex);
         gamepadstate_t state {};
@@ -245,7 +245,7 @@ int32_t I_MenuGamepadActivity(void)
 {
     I_UpdateMenuPrimaryGamepadFromActivity();
 
-    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
+    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENGAMEPADS; ++gamepadIndex)
     {
         if (!I_IsMenuGamepadAllowed(gamepadIndex))
             continue;

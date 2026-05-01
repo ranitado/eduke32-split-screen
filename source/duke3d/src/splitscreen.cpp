@@ -128,7 +128,7 @@ static void G_ClearSplitScreenInputFromOtherPlayers(int32_t const input, int32_t
 
 static int32_t G_IsSplitScreenGamepadIndexConnected(int32_t const gamepadIndex)
 {
-    if ((unsigned)gamepadIndex >= (unsigned)MAX_LOCAL_SPLITSCREEN_PLAYERS || gamepadIndex >= joyGetConnectedGamepadCount())
+    if ((unsigned)gamepadIndex >= (unsigned)MAXSPLITSCREENGAMEPADS || gamepadIndex >= joyGetConnectedGamepadCount())
         return 0;
 
     gamepadstate_t state {};
@@ -137,7 +137,7 @@ static int32_t G_IsSplitScreenGamepadIndexConnected(int32_t const gamepadIndex)
 
 static int32_t G_FindUnassignedGamepadInput(int32_t const playerNum, int32_t const requireConnected)
 {
-    for (int32_t gamepadIndex = 0; gamepadIndex < MAX_LOCAL_SPLITSCREEN_PLAYERS; ++gamepadIndex)
+    for (int32_t gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENGAMEPADS; ++gamepadIndex)
     {
         if (G_IsSplitScreenGamepadIndexConnected(gamepadIndex) != requireConnected)
             continue;

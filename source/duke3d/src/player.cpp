@@ -4014,6 +4014,10 @@ void P_AddAmmo(DukePlayer_t * const pPlayer, int const weaponNum, int const addA
 
     if (pPlayer->ammo_amount[weaponNum] > pPlayer->max_ammo_amount[weaponNum])
         pPlayer->ammo_amount[weaponNum] = pPlayer->max_ammo_amount[weaponNum];
+
+    int const playerNum = P_Get(pPlayer->i);
+    if (pPlayer->ammo_amount[weaponNum] > 0 && PWEAPON(playerNum, weaponNum, WorksLike) == PISTOL_WEAPON)
+        pPlayer->gotweapon |= (1 << weaponNum);
 }
 
 static void P_AddWeaponNoSwitch(DukePlayer_t * const p, int const weaponNum)
