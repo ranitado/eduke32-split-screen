@@ -69,6 +69,152 @@ static int32_t G_GetHighestActiveSplitScreenPlayer(void)
     return highestPlayer;
 }
 
+static int32_t G_SplitScreenInputsOverlap(int32_t inputA, int32_t inputB)
+{
+    inputA = G_NormalizeSplitScreenInput(inputA);
+    inputB = G_NormalizeSplitScreenInput(inputB);
+
+    if (inputA == SPLITSCREEN_INPUT_NONE || inputB == SPLITSCREEN_INPUT_NONE)
+        return 0;
+
+    if (G_SplitScreenInputHasKeyboardMouse(inputA) && G_SplitScreenInputHasKeyboardMouse(inputB))
+        return 1;
+
+    int32_t const gamepadA = G_GetSplitScreenInputGamepadIndex(inputA);
+    int32_t const gamepadB = G_GetSplitScreenInputGamepadIndex(inputB);
+    return gamepadA >= 0 && gamepadA == gamepadB;
+}
+
+static int32_t G_IsSplitScreenInputUsedByOtherPlayer(int32_t const input, int32_t const playerToSkip)
+{
+    for (int playerNum = 0; playerNum < MAX_LOCAL_SPLITSCREEN_PLAYERS; ++playerNum)
+    {
+        if (playerNum == playerToSkip)
+            continue;
+
+        if (G_SplitScreenInputsOverlap(input, ud.config.SplitScreenPlayerInput[playerNum]))
+            return 1;
+    }
+
+    return 0;
+}
+
+static int32_t G_IsSplitScreenInputUsedByActiveOtherPlayer(int32_t const input, int32_t const playerToSkip)
+{
+    for (int viewIndex = 0; viewIndex < g_splitScreenActivePlayerCount; ++viewIndex)
+    {
+        int32_t const playerNum = g_splitScreenActivePlayers[viewIndex];
+        if ((unsigned)playerNum >= (unsigned)MAX_LOCAL_SPLITSCREEN_PLAYERS || playerNum == playerToSkip)
+            continue;
+
+        if (G_SplitScreenInputsOverlap(input, ud.config.SplitScreenPlayerInput[playerNum]))
+            return 1;
+    }
+
+    return 0;
+}
+
+static void G_ClearSplitScreenInputFromOtherPlayers(int32_t const input, int32_t const playerToKeep)
+{
+    for (int playerNum = 0; playerNum < MAX_LOCAL_SPLITSCREEN_PLAYERS; ++playerNum)
+    {
+        if (playerNum == playerToKeep)
+            continue;
+
+        if (G_SplitScreenInputsOverlap(input, ud.config.SplitScreenPlayerInput[playerNum]))
+            ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_NONE;
+    }
+}
+
+static int32_t G_IsSplitScreenGamepadIndexConnected(int32_t const gamepadIndex)
+{
+    if ((unsigned)gamepadIndex >= (unsigned)MAX_LOCAL_SPLITSCREEN_PLAYERS || gamepadIndex >= joyGetConnectedGamepadCount())
+        return 0;
+
+    gamepadstate_t state {};
+    return joyGetGamepadState(gamepadIndex, &state) == 0 && state.connected;
+}
+
+static int32_t G_FindUnassignedGamepadInput(int32_t const playerNum, int32_t const requireConnected)
+{
+    for (int32_t gamepadIndex = 0; gamepadIndex < MAX_LOCAL_SPLITSCREEN_PLAYERS; ++gamepadIndex)
+    {
+        if (G_IsSplitScreenGamepadIndexConnected(gamepadIndex) != requireConnected)
+            continue;
+
+        int32_t const input = SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
+        if (!G_IsSplitScreenInputUsedByActiveOtherPlayer(input, playerNum))
+            return input;
+    }
+
+    return SPLITSCREEN_INPUT_NONE;
+}
+
+static int32_t G_IsSplitScreenInputConnected(int32_t input)
+{
+    input = G_NormalizeSplitScreenInput(input);
+    if (input == SPLITSCREEN_INPUT_NONE)
+        return 0;
+
+    if (G_SplitScreenInputHasKeyboardMouse(input))
+        return 1;
+
+    return G_IsSplitScreenGamepadIndexConnected(G_GetSplitScreenInputGamepadIndex(input));
+}
+
+static int32_t G_FindUnassignedSplitScreenInput(int32_t const playerNum)
+{
+    if (playerNum == myconnectindex && !G_IsSplitScreenInputUsedByActiveOtherPlayer(SPLITSCREEN_INPUT_KEYBOARD_MOUSE, playerNum))
+        return SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+
+    int32_t input = G_FindUnassignedGamepadInput(playerNum, 1);
+    if (input != SPLITSCREEN_INPUT_NONE)
+        return input;
+
+    if (playerNum != myconnectindex && !G_IsSplitScreenInputUsedByActiveOtherPlayer(SPLITSCREEN_INPUT_KEYBOARD_MOUSE, playerNum))
+        return SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+
+    input = G_FindUnassignedGamepadInput(playerNum, 0);
+    if (input != SPLITSCREEN_INPUT_NONE)
+        return input;
+
+    return SPLITSCREEN_INPUT_NONE;
+}
+
+int32_t G_AssignSplitScreenPlayerInputIfNeeded(int32_t const playerNum)
+{
+    if ((unsigned)playerNum >= (unsigned)MAX_LOCAL_SPLITSCREEN_PLAYERS)
+        return -1;
+
+    int32_t const currentInput = G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum]);
+    ud.config.SplitScreenPlayerInput[playerNum] = currentInput;
+
+    if (currentInput != SPLITSCREEN_INPUT_NONE && G_IsSplitScreenInputConnected(currentInput)
+        && !G_IsSplitScreenInputUsedByActiveOtherPlayer(currentInput, playerNum))
+    {
+        G_ClearSplitScreenInputFromOtherPlayers(currentInput, playerNum);
+        return 0;
+    }
+
+    int32_t const replacementInput = G_FindUnassignedSplitScreenInput(playerNum);
+    if (replacementInput == SPLITSCREEN_INPUT_NONE)
+        return -1;
+
+    if (currentInput != SPLITSCREEN_INPUT_NONE && !G_IsSplitScreenInputConnected(currentInput)
+        && !G_IsSplitScreenInputConnected(replacementInput) && !G_IsSplitScreenInputUsedByActiveOtherPlayer(currentInput, playerNum))
+        return 0;
+
+    ud.config.SplitScreenPlayerInput[playerNum] = replacementInput;
+    G_ClearSplitScreenInputFromOtherPlayers(replacementInput, playerNum);
+    return 1;
+}
+
+static void G_AssignActiveSplitScreenPlayerInputsIfNeeded(void)
+{
+    for (int viewIndex = 0; viewIndex < g_splitScreenActivePlayerCount; ++viewIndex)
+        G_AssignSplitScreenPlayerInputIfNeeded(g_splitScreenActivePlayers[viewIndex]);
+}
+
 static void G_RebuildLocalConnectionChain(void)
 {
     connecthead = g_splitScreenActivePlayers[0];
@@ -310,6 +456,7 @@ void G_SetActiveSplitScreenPlayerCount(int32_t const playerCount)
     for (int i = 0; i < g_splitScreenActivePlayerCount; ++i)
         g_splitScreenActivePlayers[i] = i;
 
+    G_AssignActiveSplitScreenPlayerInputsIfNeeded();
     G_UpdateSplitScreenMultiplayerState();
 }
 
@@ -327,6 +474,7 @@ int32_t G_AddSplitScreenPlayer(int32_t const playerNum)
 
     g_splitScreenConfiguredPlayerCount = max(g_splitScreenConfiguredPlayerCount, playerNum + 1);
     g_splitScreenActivePlayers[g_splitScreenActivePlayerCount++] = playerNum;
+    G_AssignSplitScreenPlayerInputIfNeeded(playerNum);
 
     if (oldActivePlayerCount == 1)
         ud.m_coop = ud.coop = 1;

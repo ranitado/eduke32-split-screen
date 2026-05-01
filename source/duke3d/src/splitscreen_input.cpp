@@ -1472,6 +1472,7 @@ static void G_UpdateSplitScreenJoinInputs(void)
                 G_CloseSplitScreenConfigMenu(playerNum);
                 G_FreezeSplitScreenPadInput(playerNum, state);
                 g_splitScreenJoinSuppressFrames[playerNum] = 2;
+                I_ClearAllInput();
                 G_PlaySplitScreenMenuSound(PISTOL_BODYHIT);
             }
         }

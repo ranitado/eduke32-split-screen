@@ -299,6 +299,7 @@ static MenuMenuFormat_t MMF_Top_Options =          { {  MENU_MARGIN_CENTER<<16, 
 static MenuMenuFormat_t MMF_Top_OptionsCentered =  { {  MENU_MARGIN_CENTER<<16, 50<<16, }, -(202<<16) };
 static MenuMenuFormat_t MMF_Top_Joystick_Network = { {  MENU_MARGIN_CENTER<<16, 70<<16, }, -(190<<16) };
 static MenuMenuFormat_t MMF_BigOptions =           { {    MENU_MARGIN_WIDE<<16, 38<<16, }, -(190<<16) };
+static MenuMenuFormat_t MMF_BigOptionsCentered =   { {    MENU_MARGIN_WIDE<<16, 58<<16, },  (170<<16) };
 #ifdef USE_OPENGL
 static MenuMenuFormat_t MMF_BigOptionsScrolling =  { {    MENU_MARGIN_WIDE<<16, 38<<16, },  (187<<16) };
 #endif
@@ -613,16 +614,9 @@ static MenuEntry_t ME_CONTROLS_AIM_AUTO = MAKE_MENUENTRY( "Auto aim:", &MF_Redfo
 static MenuOption_t MEO_GAMESETUP_ALWAYS_RUN = MAKE_MENUOPTION( &MF_Redfont, &MEOS_NoYes, &ud.auto_run);
 static MenuEntry_t ME_GAMESETUP_ALWAYS_RUN = MAKE_MENUENTRY( "Always run:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_GAMESETUP_ALWAYS_RUN, Option );
 
-MAKE_MENU_TOP_ENTRYLINK( "Assign Input", MEF_BigOptionsRt, CONTROLS_ASSIGNINPUT, MENU_ASSIGNINPUT );
+MAKE_MENU_TOP_ENTRYLINK( "Player Input", MEF_BigOptionsRt, CONTROLS_ASSIGNINPUT, MENU_ASSIGNINPUT );
 
 static char const * const MEOSN_ASSIGNINPUT_PAD[] = { "Pad 1", "Pad 2", "Pad 3", "Pad 4" };
-static char const * const MEOSN_ASSIGNINPUT_KB_PAD[] = { "KB and Pad 1", "KB and Pad 2", "KB and Pad 3", "KB and Pad 4" };
-static int32_t const MEOSV_ASSIGNINPUT_KB_PAD[] = {
-    SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1,
-    SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD2,
-    SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD3,
-    SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4,
-};
 static char const *MEOSN_ASSIGNINPUT_PLAYER1_INPUT[MAXSPLITSCREENCONTROLLERS + 2];
 static int32_t MEOSV_ASSIGNINPUT_PLAYER1_INPUT[MAXSPLITSCREENCONTROLLERS + 2];
 static char const *MEOSN_ASSIGNINPUT_OTHER_INPUT[MAXSPLITSCREENCONTROLLERS + 2];
@@ -638,8 +632,13 @@ static MenuOption_t MEO_ASSIGNINPUT_PLAYER3 = MAKE_MENUOPTION( &MF_Redfont, &MEO
 static MenuEntry_t ME_ASSIGNINPUT_PLAYER3 = MAKE_MENUENTRY( "Player 3:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_ASSIGNINPUT_PLAYER3, Option );
 static MenuOption_t MEO_ASSIGNINPUT_PLAYER4 = MAKE_MENUOPTION( &MF_Redfont, &MEOS_ASSIGNINPUT_OTHER_INPUT, &ud.config.SplitScreenPlayerInput[3] );
 static MenuEntry_t ME_ASSIGNINPUT_PLAYER4 = MAKE_MENUENTRY( "Player 4:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_ASSIGNINPUT_PLAYER4, Option );
-static MenuOption_t MEO_ASSIGNINPUT_P1_KB_PAD = MAKE_MENUOPTION( &MF_Redfont, &MEOS_NoYes, &ud.config.SplitScreenSeparateKeyboardMouse );
-static MenuEntry_t ME_ASSIGNINPUT_P1_KB_PAD = MAKE_MENUENTRY( "p1 kb and pad:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_ASSIGNINPUT_P1_KB_PAD, Option );
+static char ME_ASSIGNINPUT_PLAYER_CONNECTION_NAME[MAXSPLITSCREENCONTROLLERS - 1][32];
+static MenuLink_t MEO_ASSIGNINPUT_PLAYER2_CONNECTION = { MENU_NULL, MA_None, };
+static MenuEntry_t ME_ASSIGNINPUT_PLAYER2_CONNECTION = MAKE_MENUENTRY( "Join player 2", &MF_Redfont, &MEF_BigOptionsRt, &MEO_ASSIGNINPUT_PLAYER2_CONNECTION, Link );
+static MenuLink_t MEO_ASSIGNINPUT_PLAYER3_CONNECTION = { MENU_NULL, MA_None, };
+static MenuEntry_t ME_ASSIGNINPUT_PLAYER3_CONNECTION = MAKE_MENUENTRY( "Join player 3", &MF_Redfont, &MEF_BigOptionsRt, &MEO_ASSIGNINPUT_PLAYER3_CONNECTION, Link );
+static MenuLink_t MEO_ASSIGNINPUT_PLAYER4_CONNECTION = { MENU_NULL, MA_None, };
+static MenuEntry_t ME_ASSIGNINPUT_PLAYER4_CONNECTION = MAKE_MENUENTRY( "Join player 4", &MF_Redfont, &MEF_BigOptionsRt, &MEO_ASSIGNINPUT_PLAYER4_CONNECTION, Link );
 
 static bool Menu_AssignInputOptionSetHasValue(MenuOptionSet_t const * const options, int32_t const value)
 {
@@ -650,57 +649,82 @@ static bool Menu_AssignInputOptionSetHasValue(MenuOptionSet_t const * const opti
     return false;
 }
 
-static int32_t Menu_NormalizeAssignInputForMenu(int32_t input)
+static int32_t Menu_NormalizeAssignInputForMenu(int32_t const playerNum, int32_t input)
 {
     input = G_NormalizeSplitScreenInput(input);
-    if (!ud.config.SplitScreenSeparateKeyboardMouse && input >= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 && input <= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4)
-        return SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+
+    if (input >= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 && input <= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4)
+    {
+        int32_t const gamepadIndex = input - SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1;
+        return playerNum == 0 ? SPLITSCREEN_INPUT_KEYBOARD_MOUSE : SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
+    }
 
     return input;
+}
+
+static int32_t Menu_IsAssignInputConnectionEditable(void)
+{
+    return g_player[myconnectindex].ps != nullptr && (g_player[myconnectindex].ps->gm & MODE_GAME) != 0;
+}
+
+static void Menu_UpdateAssignInputConnectionEntries(void)
+{
+    MenuEntry_t * const entries[] = {
+        &ME_ASSIGNINPUT_PLAYER2_CONNECTION,
+        &ME_ASSIGNINPUT_PLAYER3_CONNECTION,
+        &ME_ASSIGNINPUT_PLAYER4_CONNECTION,
+    };
+
+    int32_t const editable = Menu_IsAssignInputConnectionEditable();
+
+    for (int playerNum = 1; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
+    {
+        int const index = playerNum - 1;
+        int32_t const active = G_IsSplitScreenPlayerActive(playerNum);
+        Bsnprintf(ME_ASSIGNINPUT_PLAYER_CONNECTION_NAME[index], sizeof(ME_ASSIGNINPUT_PLAYER_CONNECTION_NAME[index]),
+                  "%s player %d", active ? "Disconnect" : "Join", playerNum + 1);
+        entries[index]->name = ME_ASSIGNINPUT_PLAYER_CONNECTION_NAME[index];
+
+        entries[index]->flags &= ~(MEF_Disabled | MEF_LookDisabled);
+        if (!editable)
+            entries[index]->flags |= MEF_Disabled;
+    }
+}
+
+static int32_t Menu_GetAssignInputConnectionPlayer(MenuEntry_t const * const entry)
+{
+    if (entry == &ME_ASSIGNINPUT_PLAYER2_CONNECTION) return 1;
+    if (entry == &ME_ASSIGNINPUT_PLAYER3_CONNECTION) return 2;
+    if (entry == &ME_ASSIGNINPUT_PLAYER4_CONNECTION) return 3;
+    return -1;
 }
 
 static void Menu_PopulateAssignInputOptions(void)
 {
     int optionCount = 0;
 
-    if (ud.config.SplitScreenSeparateKeyboardMouse)
+    MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = "KB/Mouse";
+    MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+    ++optionCount;
+
+    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
     {
-        for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
-        {
-            MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = MEOSN_ASSIGNINPUT_KB_PAD[gamepadIndex];
-            MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 + gamepadIndex;
-            ++optionCount;
-        }
-
-        MEOS_ASSIGNINPUT_PLAYER1_INPUT.numOptions = optionCount;
-    }
-    else
-    {
-        MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = "KB/Mouse";
-        MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+        MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = MEOSN_ASSIGNINPUT_PAD[gamepadIndex];
+        MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
         ++optionCount;
-
-        for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
-        {
-            MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = MEOSN_ASSIGNINPUT_PAD[gamepadIndex];
-            MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
-            ++optionCount;
-        }
-
-        MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = "None";
-        MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_NONE;
-        ++optionCount;
-
-        MEOS_ASSIGNINPUT_PLAYER1_INPUT.numOptions = optionCount;
     }
+
+    MEOSN_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = "None";
+    MEOSV_ASSIGNINPUT_PLAYER1_INPUT[optionCount] = SPLITSCREEN_INPUT_NONE;
+    ++optionCount;
+
+    MEOS_ASSIGNINPUT_PLAYER1_INPUT.numOptions = optionCount;
 
     optionCount = 0;
-    if (!ud.config.SplitScreenSeparateKeyboardMouse)
-    {
-        MEOSN_ASSIGNINPUT_OTHER_INPUT[optionCount] = "KB/Mouse";
-        MEOSV_ASSIGNINPUT_OTHER_INPUT[optionCount] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
-        ++optionCount;
-    }
+    MEOSN_ASSIGNINPUT_OTHER_INPUT[optionCount] = "KB/Mouse";
+    MEOSV_ASSIGNINPUT_OTHER_INPUT[optionCount] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+    ++optionCount;
+
     for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
     {
         MEOSN_ASSIGNINPUT_OTHER_INPUT[optionCount] = MEOSN_ASSIGNINPUT_PAD[gamepadIndex];
@@ -716,19 +740,20 @@ static void Menu_PopulateAssignInputOptions(void)
 
     for (int playerNum = 0; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
     {
-        ud.config.SplitScreenPlayerInput[playerNum] = Menu_NormalizeAssignInputForMenu(ud.config.SplitScreenPlayerInput[playerNum]);
+        ud.config.SplitScreenPlayerInput[playerNum] = Menu_NormalizeAssignInputForMenu(playerNum, ud.config.SplitScreenPlayerInput[playerNum]);
 
         MenuOptionSet_t const * const options = playerNum == 0 ? &MEOS_ASSIGNINPUT_PLAYER1_INPUT : &MEOS_ASSIGNINPUT_OTHER_INPUT;
         if (!Menu_AssignInputOptionSetHasValue(options, ud.config.SplitScreenPlayerInput[playerNum]))
         {
             if (playerNum == 0)
-                ud.config.SplitScreenPlayerInput[playerNum] = ud.config.SplitScreenSeparateKeyboardMouse ? SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 : SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
-            else if (ud.config.SplitScreenSeparateKeyboardMouse && G_SplitScreenInputHasKeyboardMouse(ud.config.SplitScreenPlayerInput[playerNum]))
-                ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_NONE;
+                ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
             else
                 ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_NONE;
         }
     }
+
+    ud.config.SplitScreenSeparateKeyboardMouse = 0;
+    Menu_UpdateAssignInputConnectionEntries();
 }
 
 static int32_t Menu_IsAssignInputDisconnected(int32_t const input)
@@ -1121,7 +1146,9 @@ static MenuEntry_t *MEL_ASSIGNINPUT[] = {
     &ME_ASSIGNINPUT_PLAYER3,
     &ME_ASSIGNINPUT_PLAYER4,
     &ME_Space6_Redfont,
-    &ME_ASSIGNINPUT_P1_KB_PAD,
+    &ME_ASSIGNINPUT_PLAYER2_CONNECTION,
+    &ME_ASSIGNINPUT_PLAYER3_CONNECTION,
+    &ME_ASSIGNINPUT_PLAYER4_CONNECTION,
 };
 
 static MenuEntry_t *MEL_CHEATS[ARRAY_SIZE(ME_CheatCodes)+1] = {
@@ -1880,8 +1907,8 @@ static MenuMenu_t M_GAMESETUP = MAKE_MENUMENU( "Game Setup", &MMF_BigOptions, ME
 static MenuMenu_t M_OPTIONS = MAKE_MENUMENU( s_Options, &MMF_Top_OptionsCentered, MEL_OPTIONS );
 static MenuMenu_t M_VIDEOSETUP = MAKE_MENUMENU( "Video Mode", &MMF_BigOptions, MEL_VIDEOSETUP );
 static MenuMenu_t M_KEYBOARDSETUP = MAKE_MENUMENU( "Keyboard Setup", &MMF_Top_Options, MEL_KEYBOARDSETUP );
-static MenuMenu_t M_CONTROLS = MAKE_MENUMENU( "Control Setup", &MMF_BigOptions, MEL_CONTROLS );
-static MenuMenu_t M_ASSIGNINPUT = MAKE_MENUMENU( "Assign Input", &MMF_BigOptions, MEL_ASSIGNINPUT );
+static MenuMenu_t M_CONTROLS = MAKE_MENUMENU( "Control Setup", &MMF_BigOptionsCentered, MEL_CONTROLS );
+static MenuMenu_t M_ASSIGNINPUT = MAKE_MENUMENU( "Player Input", &MMF_BigOptions, MEL_ASSIGNINPUT );
 static MenuMenu_t M_CHEATS = MAKE_MENUMENU( "Cheats", &MMF_SmallOptions, MEL_CHEATS );
 static MenuMenu_t M_MOUSESETUP = MAKE_MENUMENU( "Mouse Setup", &MMF_BigOptions, MEL_MOUSESETUP );
 #ifdef EDUKE32_ANDROID_MENU
@@ -7033,52 +7060,85 @@ static int32_t Menu_GetSkillSound(int32_t const skillIndex)
     }
 }
 
-static int32_t Menu_IsGamepadInputUsedByOtherPlayer(int32_t const gamepadIndex, int32_t const playerToSkip)
+static int32_t Menu_SplitScreenInputsOverlap(int32_t inputA, int32_t inputB)
 {
+    inputA = G_NormalizeSplitScreenInput(inputA);
+    inputB = G_NormalizeSplitScreenInput(inputB);
+
+    if (inputA == SPLITSCREEN_INPUT_NONE || inputB == SPLITSCREEN_INPUT_NONE)
+        return 0;
+
+    if (G_SplitScreenInputHasKeyboardMouse(inputA) && G_SplitScreenInputHasKeyboardMouse(inputB))
+        return 1;
+
+    int32_t const gamepadA = G_GetSplitScreenInputGamepadIndex(inputA);
+    int32_t const gamepadB = G_GetSplitScreenInputGamepadIndex(inputB);
+    return gamepadA >= 0 && gamepadA == gamepadB;
+}
+
+static int32_t Menu_GetPlayerWithStartingInput(int32_t const startingInput, int32_t const playerCount)
+{
+    for (int playerNum = 0; playerNum < playerCount; ++playerNum)
+        if (Menu_SplitScreenInputsOverlap(startingInput, ud.config.SplitScreenPlayerInput[playerNum]))
+            return playerNum;
+
+    return -1;
+}
+
+static int32_t Menu_FindPlayerWithoutInput(int32_t const playerCount)
+{
+    for (int playerNum = 0; playerNum < playerCount; ++playerNum)
+        if (G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum]) == SPLITSCREEN_INPUT_NONE)
+            return playerNum;
+
+    return -1;
+}
+
+static void Menu_AssignStartingInputToPlayer(int32_t playerCount)
+{
+    playerCount = clamp<int32_t>(playerCount, 1, MAXSPLITSCREENCONTROLLERS);
+
+    int32_t const gamepadIndex = I_GetMenuAdvanceGamepadIndex();
+    int32_t const startingInput = (unsigned)gamepadIndex < MAXSPLITSCREENCONTROLLERS
+        ? SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex
+        : SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+
+    int32_t const assignedPlayer = Menu_GetPlayerWithStartingInput(startingInput, playerCount);
+    if (assignedPlayer >= 0)
+    {
+        if ((unsigned)gamepadIndex < MAXSPLITSCREENCONTROLLERS && assignedPlayer == myconnectindex)
+            joySetPrimaryGamepadIndex(gamepadIndex);
+        return;
+    }
+
+    int32_t targetPlayer = Menu_FindPlayerWithoutInput(playerCount);
+    if (targetPlayer < 0)
+        targetPlayer = myconnectindex;
+
+    ud.config.SplitScreenPlayerInput[targetPlayer] = startingInput;
+
     for (int playerNum = 0; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
     {
-        if (playerNum == playerToSkip)
+        if (playerNum == targetPlayer)
             continue;
 
-        if (G_GetSplitScreenInputGamepadIndex(G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum])) == gamepadIndex)
-            return 1;
+        if (Menu_SplitScreenInputsOverlap(startingInput, ud.config.SplitScreenPlayerInput[playerNum]))
+            ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_NONE;
     }
 
-    return 0;
-}
-
-static int32_t Menu_FindReplacementGamepadInput(int32_t const playerToSkip)
-{
-    for (int gamepadIndex = 0; gamepadIndex < MAXSPLITSCREENCONTROLLERS; ++gamepadIndex)
-        if (!Menu_IsGamepadInputUsedByOtherPlayer(gamepadIndex, playerToSkip))
-            return SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
-
-    return SPLITSCREEN_INPUT_NONE;
-}
-
-static void Menu_AssignStartingGamepadToPlayer1(void)
-{
-    int32_t const gamepadIndex = I_GetMenuAdvanceGamepadIndex();
-    if ((unsigned)gamepadIndex >= MAXSPLITSCREENCONTROLLERS)
-        return;
-
-    int32_t const player1Input = ud.config.SplitScreenSeparateKeyboardMouse
-        ? SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 + gamepadIndex
-        : SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
-
-    ud.config.SplitScreenPlayerInput[0] = player1Input;
-    joySetPrimaryGamepadIndex(gamepadIndex);
-
-    for (int playerNum = 1; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
-    {
-        if (G_GetSplitScreenInputGamepadIndex(G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum])) != gamepadIndex)
-            continue;
-
-        ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_NONE;
-        ud.config.SplitScreenPlayerInput[playerNum] = Menu_FindReplacementGamepadInput(playerNum);
-    }
+    if ((unsigned)gamepadIndex < MAXSPLITSCREENCONTROLLERS && targetPlayer == myconnectindex)
+        joySetPrimaryGamepadIndex(gamepadIndex);
 
     CONFIG_WriteSetup(0);
+}
+
+static int32_t Menu_GetSavePlayerCountForInputAssignment(savebrief_t const &sv)
+{
+    savehead_t header {};
+    if (sv.isValid() && G_LoadSaveHeaderNew(sv.path, &header) == 0 && header.numplayers > 0)
+        return clamp<int32_t>(header.numplayers, 1, MAXSPLITSCREENCONTROLLERS);
+
+    return Menu_GetCurrentLocalPlayerCount();
 }
 
 static int32_t Menu_RelaunchPendingAddonNewGame(int32_t const skillIndex)
@@ -7087,7 +7147,7 @@ static int32_t Menu_RelaunchPendingAddonNewGame(int32_t const skillIndex)
     if (pendingAddon == g_addonNum)
         return 0;
 
-    Menu_AssignStartingGamepadToPlayer1();
+    Menu_AssignStartingInputToPlayer(Menu_GetPendingSimpleGameMode() == MENU_SIMPLE_GAMEMODE_SINGLE ? 1 : Menu_GetPendingLocalPlayerCount());
 
     char extraArgs[160];
     Bsnprintf(extraArgs, sizeof(extraArgs), "-splitscreennewgame %d %d %d %d %d %d",
@@ -7121,7 +7181,7 @@ static void Menu_StartConfiguredGame(int32_t const skillIndex, int32_t const ski
     ud.m_respawn_monsters = (skillIndex == 3);
     ud.m_monsters_off = ud.monsters_off = 0;
     ud.multimode = Menu_GetCurrentLocalPlayerCount();
-    Menu_AssignStartingGamepadToPlayer1();
+    Menu_AssignStartingInputToPlayer(Menu_GetCurrentLocalPlayerCount());
     M_ResetReplayCampaignProgress();
     G_NewGame_EnterLevel();
 }
@@ -7150,7 +7210,7 @@ static void Menu_StartReplayLevel(void)
     ud.m_ffire = ud.ffire;
     ud.m_weaponsharing = ud.weaponsharing;
 
-    Menu_AssignStartingGamepadToPlayer1();
+    Menu_AssignStartingInputToPlayer(Menu_GetCurrentLocalPlayerCount());
     Menu_Change(MENU_CLOSE);
     G_NewGame_EnterLevel();
 }
@@ -7768,36 +7828,12 @@ static void Menu_EntryOptionDidModify(MenuEntry_t *entry)
     };
 
     int const assignInputPlayer = getAssignInputPlayer(entry);
-    if (assignInputPlayer >= 0 || entry == &ME_ASSIGNINPUT_P1_KB_PAD)
+    if (assignInputPlayer >= 0)
     {
-        if (ud.config.SplitScreenSeparateKeyboardMouse)
-        {
-            int32_t const player1GamepadIndex = G_GetSplitScreenInputGamepadIndex(G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[0]));
-            ud.config.SplitScreenPlayerInput[0] = (player1GamepadIndex >= 0)
-                ? SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 + player1GamepadIndex
-                : SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1;
-
-            for (int playerNum = 1; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
-            {
-                int32_t const input = G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum]);
-                if (input == SPLITSCREEN_INPUT_KEYBOARD_MOUSE)
-                    ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_NONE;
-                else if (input >= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 && input <= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4)
-                    ud.config.SplitScreenPlayerInput[playerNum] = SPLITSCREEN_INPUT_GAMEPAD1 + (input - SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1);
-            }
-        }
-        else
-        {
-            for (int playerNum = 0; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
-            {
-                int32_t const input = G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum]);
-                if (input >= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1 && input <= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4)
-                    ud.config.SplitScreenPlayerInput[playerNum] = (playerNum == 0) ? SPLITSCREEN_INPUT_KEYBOARD_MOUSE : SPLITSCREEN_INPUT_NONE;
-            }
-        }
-
         for (int playerNum = 0; playerNum < MAXSPLITSCREENCONTROLLERS; ++playerNum)
-            ud.config.SplitScreenPlayerInput[playerNum] = G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[playerNum]);
+            ud.config.SplitScreenPlayerInput[playerNum] = Menu_NormalizeAssignInputForMenu(playerNum, ud.config.SplitScreenPlayerInput[playerNum]);
+
+        ud.config.SplitScreenSeparateKeyboardMouse = 0;
 
         Menu_PopulateAssignInputOptions();
         CONFIG_WriteSetup(0);
@@ -8231,6 +8267,8 @@ static void Menu_Verify(int32_t input)
                 g_quickload = &g_lastusersave;
             }
 
+            Menu_AssignStartingInputToPlayer(Menu_GetSavePlayerCountForInputAssignment(sv));
+
             KB_FlushKeyboardQueue();
             KB_ClearKeysDown();
 
@@ -8252,7 +8290,10 @@ static void Menu_Verify(int32_t input)
             if (G_LoadPlayerMaybeMulti(sv))
                 Menu_Change(MENU_PREVIOUS);
             else
+            {
+                I_ClearAllInput();
                 Menu_Change(MENU_CLOSE);
+            }
         }
         break;
 
@@ -10787,6 +10828,23 @@ static MenuEntry_t *Menu_RunInput_Menu_Movement(MenuMenu_t *menu, MenuMovement_t
 
 static void Menu_RunInput_EntryLink_Activate(MenuEntry_t *entry)
 {
+    int32_t const assignInputConnectionPlayer = Menu_GetAssignInputConnectionPlayer(entry);
+    if (assignInputConnectionPlayer > 0)
+    {
+        if (!Menu_IsAssignInputConnectionEditable())
+            return;
+
+        if (G_IsSplitScreenPlayerActive(assignInputConnectionPlayer))
+            G_DisconnectSplitScreenPlayer(assignInputConnectionPlayer);
+        else
+            G_AddSplitScreenPlayer(assignInputConnectionPlayer);
+
+        Menu_PopulateAssignInputOptions();
+        CONFIG_WriteSetup(0);
+        Menu_RunInput_Menu_MovementVerify(&M_ASSIGNINPUT);
+        return;
+    }
+
 #ifdef _WIN32
     if (entry == &ME_GAMESETUP_CHECKUPDATES)
     {

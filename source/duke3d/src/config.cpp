@@ -527,12 +527,12 @@ void CONFIG_SetDefaults(void)
     ud.config.JoystickAimWeight = 4;
     ud.config.JoystickViewCentering = CONFIG_CONTROLLER_VIEW_CENTERING_DEFAULT;
     ud.config.JoystickAimAssist = 1;
-    ud.config.SplitScreenSeparateKeyboardMouse = 1;
+    ud.config.SplitScreenSeparateKeyboardMouse = 0;
     ud.config.SplitScreenHudStyle = HUD_STYLE_SPLITSCREEN;
-    ud.config.SplitScreenPlayerInput[0] = SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1;
-    ud.config.SplitScreenPlayerInput[1] = SPLITSCREEN_INPUT_GAMEPAD2;
-    ud.config.SplitScreenPlayerInput[2] = SPLITSCREEN_INPUT_GAMEPAD3;
-    ud.config.SplitScreenPlayerInput[3] = SPLITSCREEN_INPUT_GAMEPAD4;
+    ud.config.SplitScreenPlayerInput[0] = SPLITSCREEN_INPUT_KEYBOARD_MOUSE;
+    ud.config.SplitScreenPlayerInput[1] = SPLITSCREEN_INPUT_GAMEPAD1;
+    ud.config.SplitScreenPlayerInput[2] = SPLITSCREEN_INPUT_GAMEPAD2;
+    ud.config.SplitScreenPlayerInput[3] = SPLITSCREEN_INPUT_GAMEPAD3;
     for (int i = 0; i < MAXSPLITSCREENCONTROLLERPROFILES; ++i)
     {
         ud.config.SplitScreenJoystickAimWeight[i] = ud.config.JoystickAimWeight;
@@ -1515,6 +1515,7 @@ int CONFIG_ReadSetup(void)
     SCRIPT_GetNumber(ud.config.scripthandle, "Controls", "SeparateKeyboardMouseAndControllers", &ud.config.SplitScreenSeparateKeyboardMouse);
     if (g_splitScreenResumeSeparateKeyboardMouse >= 0)
         ud.config.SplitScreenSeparateKeyboardMouse = g_splitScreenResumeSeparateKeyboardMouse;
+    ud.config.SplitScreenSeparateKeyboardMouse = 0;
     // The split-screen mod has no visible "Use Controller" option, so avoid
     // trapping existing configs in keyboard/mouse-only mode.
     ud.setup.usejoystick = 1;
@@ -1529,6 +1530,12 @@ int CONFIG_ReadSetup(void)
         Bsprintf(tempbuf, "SplitScreenPlayer%dInput", playerNumber);
         SCRIPT_GetNumber(ud.config.scripthandle, "Controls", tempbuf, &ud.config.SplitScreenPlayerInput[i]);
         ud.config.SplitScreenPlayerInput[i] = G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[i]);
+        if (ud.config.SplitScreenPlayerInput[i] >= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1
+            && ud.config.SplitScreenPlayerInput[i] <= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4)
+        {
+            int32_t const gamepadIndex = ud.config.SplitScreenPlayerInput[i] - SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1;
+            ud.config.SplitScreenPlayerInput[i] = i == 0 ? SPLITSCREEN_INPUT_KEYBOARD_MOUSE : SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
+        }
 
         Bsprintf(tempbuf, "SplitScreenPlayer%dAutoAim", playerNumber);
         SCRIPT_GetNumber(ud.config.scripthandle, "Controls", tempbuf, &ud.config.SplitScreenPlayerAutoAim[i]);
@@ -1852,6 +1859,7 @@ void CONFIG_WriteSetup(uint32_t flags)
 
     SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "UseJoystick", ud.setup.usejoystick, FALSE, FALSE);
     SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "UseMouse", ud.setup.usemouse, FALSE, FALSE);
+    ud.config.SplitScreenSeparateKeyboardMouse = 0;
     SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "SeparateKeyboardMouseAndControllers", ud.config.SplitScreenSeparateKeyboardMouse, FALSE, FALSE);
     SCRIPT_PutNumber(ud.config.scripthandle, "Controls", "ViewCenteringDefaultMigrated", g_controllerViewCenteringDefaultMigrated, FALSE, FALSE);
     if (!CommandName && !CONFIG_IsBlankPlayerName(szPlayerName))
@@ -1869,6 +1877,12 @@ void CONFIG_WriteSetup(uint32_t flags)
             CONFIG_SetDefaultSplitScreenPlayerName(i);
 
         ud.config.SplitScreenPlayerInput[i] = G_NormalizeSplitScreenInput(ud.config.SplitScreenPlayerInput[i]);
+        if (ud.config.SplitScreenPlayerInput[i] >= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1
+            && ud.config.SplitScreenPlayerInput[i] <= SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD4)
+        {
+            int32_t const gamepadIndex = ud.config.SplitScreenPlayerInput[i] - SPLITSCREEN_INPUT_KEYBOARD_GAMEPAD1;
+            ud.config.SplitScreenPlayerInput[i] = i == 0 ? SPLITSCREEN_INPUT_KEYBOARD_MOUSE : SPLITSCREEN_INPUT_GAMEPAD1 + gamepadIndex;
+        }
 
         Bsprintf(buf, "SplitScreenPlayer%dInput", playerNumber);
         SCRIPT_PutNumber(ud.config.scripthandle, "Controls", buf, ud.config.SplitScreenPlayerInput[i], FALSE, FALSE);
