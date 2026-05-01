@@ -316,7 +316,7 @@ static bool I_MenuGamepadButtonActive(uint32_t const buttons, int const button)
     return (g_menuGamepadClearButtons & mask) == 0;
 }
 
-static bool I_ApplyMenuGamepadButtonFilter(bool &trigger, uint32_t const buttons, int const button)
+static bool I_ApplyMenuGamepadButtonFilter(bool &trigger, uint32_t const buttons, int const button, bool const preserveExistingTrigger = true)
 {
     uint32_t const mask = 1u << button;
     bool const held = (buttons & mask) != 0;
@@ -328,7 +328,7 @@ static bool I_ApplyMenuGamepadButtonFilter(bool &trigger, uint32_t const buttons
         return false;
     }
     else
-        trigger = trigger || active;
+        trigger = (preserveExistingTrigger && trigger) || active;
 
     return active;
 }
@@ -459,8 +459,10 @@ static UserInput *I_GetUserInput(void)
     }
 
     bool const gamepadAdvanceActive = I_ApplyMenuGamepadButtonFilter(info.b_advance, buttons, CONTROLLER_BUTTON_A);
-    I_ApplyMenuGamepadButtonFilter(info.b_return, buttons, CONTROLLER_BUTTON_B);
-    I_ApplyMenuGamepadButtonFilter(info.b_escape, buttons, CONTROLLER_BUTTON_START);
+    bool const preserveClassicReturn = !restrictGamepadInput || keyboardEscapeActive || mouseReturnActive;
+    bool const preserveClassicEscape = !restrictGamepadInput || keyboardEscapeActive;
+    I_ApplyMenuGamepadButtonFilter(info.b_return, buttons, CONTROLLER_BUTTON_B, preserveClassicReturn);
+    I_ApplyMenuGamepadButtonFilter(info.b_escape, buttons, CONTROLLER_BUTTON_START, preserveClassicEscape);
 
     if (I_ShouldSuppressMenuBackInput())
     {
