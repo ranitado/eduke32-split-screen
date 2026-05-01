@@ -216,11 +216,9 @@ static void G_SetupJoinedSplitScreenPlayer(int32_t const playerNum)
     if ((unsigned)playerNum >= MAXPLAYERS || g_player[playerNum].ps == nullptr)
         return;
 
-    int32_t primaryAccess = 0;
     if (g_player[myconnectindex].ps != nullptr && playerNum != myconnectindex)
     {
         int32_t const spriteNum = G_EnsureSplitScreenPlayerSprite(playerNum);
-        primaryAccess = g_player[myconnectindex].ps->got_access;
         Bmemcpy(g_player[playerNum].ps, g_player[myconnectindex].ps, sizeof(DukePlayer_t));
         g_player[playerNum].ps->i = spriteNum;
     }
@@ -240,7 +238,7 @@ static void G_SetupJoinedSplitScreenPlayer(int32_t const playerNum)
     g_player[playerNum].ps->actors_killed = 0;
     g_player[playerNum].ps->secret_rooms = 0;
     if (playerNum != myconnectindex)
-        g_player[playerNum].ps->got_access = primaryAccess;
+        g_player[playerNum].ps->got_access = 0;
     g_player[playerNum].ps->gm = MODE_GAME;
     G_MoveJoinedSplitScreenPlayerToCoopSpawn(playerNum);
     G_SetPlayerSpriteVisible(playerNum, 1);
@@ -350,6 +348,14 @@ int32_t G_DisconnectSplitScreenPlayer(int32_t const playerNum)
     int32_t const viewIndex = G_GetSplitScreenViewForPlayer(playerNum);
     if (playerNum == myconnectindex || viewIndex <= 0 || g_splitScreenActivePlayerCount <= 1)
         return -1;
+
+    DukePlayer_t *const pDisconnected = g_player[playerNum].ps;
+    DukePlayer_t *const pPrimary = g_player[myconnectindex].ps;
+    if (pDisconnected != nullptr && pPrimary != nullptr)
+    {
+        pPrimary->got_access |= pDisconnected->got_access;
+        pDisconnected->got_access = 0;
+    }
 
     for (int i = viewIndex; i + 1 < g_splitScreenActivePlayerCount; ++i)
         g_splitScreenActivePlayers[i] = g_splitScreenActivePlayers[i + 1];

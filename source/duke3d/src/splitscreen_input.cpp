@@ -886,7 +886,7 @@ static void G_FormatSplitScreenConfigMenuLine(int const playerNum, int const con
             else if (menu.current == 1)
                 Bsnprintf(buffer, bufferSize, "Player Setup");
             else if (menu.current == 2)
-                Bsnprintf(buffer, bufferSize, "Controller Setup");
+                Bsnprintf(buffer, bufferSize, "Controller");
             else
                 Bsnprintf(buffer, bufferSize, "Disconnect player");
             break;
@@ -1049,8 +1049,10 @@ static void G_DrawSplitScreenConfigMenuForPlayer(int const viewIndex, int const 
         bool const selected = i == menu.current;
         int const pal = selected ? MF_Redfont.pal_selected : MF_Redfont.pal_deselected;
         int const shade = selected ? -24 : MF_Redfont.shade_deselected;
-        G_DrawSplitScreenConfigMenuText(boxX + 128, boxY + titleHeight + 6 + i * lineHeight, textZoom,
-                                        line, pal, shade, 0, x1, y1, x2, y2);
+        bool const centerEntry = menu.page == SPLIT_CONFIG_MENU_MAIN;
+        G_DrawSplitScreenConfigMenuText(centerEntry ? boxX + boxWidth / 2 : boxX + 128,
+                                        boxY + titleHeight + 6 + i * lineHeight, textZoom,
+                                        line, pal, shade, centerEntry ? TEXT_XCENTER : 0, x1, y1, x2, y2);
     }
 }
 
