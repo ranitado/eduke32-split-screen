@@ -63,6 +63,15 @@ static FORCE_INLINE bool G_ShouldPlayPlayerActionSound(int32_t const playerNum)
     return playerNum == screenpeek || G_HaveSplitScreen() || GTFLAGS(GAMETYPE_COOPSOUND);
 }
 
+static char const *P_GetPlayerDisplayName(int32_t const playerNum, char * const buffer, size_t const bufferSize)
+{
+    if ((unsigned)playerNum < MAXPLAYERS && g_player[playerNum].user_name[0] != '\0')
+        return &g_player[playerNum].user_name[0];
+
+    Bsnprintf(buffer, bufferSize, "Player %d", playerNum + 1);
+    return buffer;
+}
+
 static int32_t G_GetSplitScreenGamepadIndexForPlayer(int32_t const playerNum)
 {
     return G_GetSplitScreenInputGamepadIndex(G_GetSplitScreenPlayerInput(playerNum));
@@ -4438,19 +4447,24 @@ void P_FragPlayer(int playerNum)
 
             if (playerNum == screenpeek)
             {
-                Bsprintf(apStrings[QUOTE_RESERVED], "Killed by %s", &g_player[pPlayer->frag_ps].user_name[0]);
+                char killerName[MAXPLAYERNAME];
+                Bsprintf(apStrings[QUOTE_RESERVED], "Killed by %s", P_GetPlayerDisplayName(pPlayer->frag_ps, killerName, sizeof(killerName)));
                 P_DoQuote(QUOTE_RESERVED, pPlayer);
             }
             else
             {
-                Bsprintf(apStrings[QUOTE_RESERVED2], "Killed %s", &g_player[playerNum].user_name[0]);
+                char victimName[MAXPLAYERNAME];
+                Bsprintf(apStrings[QUOTE_RESERVED2], "Killed %s", P_GetPlayerDisplayName(playerNum, victimName, sizeof(victimName)));
                 P_DoQuote(QUOTE_RESERVED2, g_player[pPlayer->frag_ps].ps);
             }
 
             if (ud.obituaries)
             {
+                char killerName[MAXPLAYERNAME];
+                char victimName[MAXPLAYERNAME];
                 Bsprintf(tempbuf, apStrings[OBITQUOTEINDEX + (krand() % g_numObituaries)],
-                         &g_player[pPlayer->frag_ps].user_name[0], &g_player[playerNum].user_name[0]);
+                         P_GetPlayerDisplayName(pPlayer->frag_ps, killerName, sizeof(killerName)),
+                         P_GetPlayerDisplayName(playerNum, victimName, sizeof(victimName)));
                 G_AddUserQuote(tempbuf);
             }
             else

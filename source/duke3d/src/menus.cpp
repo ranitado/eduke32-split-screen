@@ -1130,7 +1130,6 @@ static MenuEntry_t *MEL_CONTROLS[] = {
 #else
     &ME_OPTIONS_TOUCHSETUP,
 #endif
-    &ME_Space6_Redfont,
 #ifdef EDUKE32_ANDROID_MENU
     &ME_GAMESETUP_QUICKSWITCH,
     &ME_GAMESETUP_CROUCHLOCK,
@@ -1907,7 +1906,7 @@ static MenuMenu_t M_GAMESETUP = MAKE_MENUMENU( "Game Setup", &MMF_BigOptions, ME
 static MenuMenu_t M_OPTIONS = MAKE_MENUMENU( s_Options, &MMF_Top_OptionsCentered, MEL_OPTIONS );
 static MenuMenu_t M_VIDEOSETUP = MAKE_MENUMENU( "Video Mode", &MMF_BigOptions, MEL_VIDEOSETUP );
 static MenuMenu_t M_KEYBOARDSETUP = MAKE_MENUMENU( "Keyboard Setup", &MMF_Top_Options, MEL_KEYBOARDSETUP );
-static MenuMenu_t M_CONTROLS = MAKE_MENUMENU( "Control Setup", &MMF_BigOptionsCentered, MEL_CONTROLS );
+static MenuMenu_t M_CONTROLS = MAKE_MENUMENU( "Control Setup", &MMF_BigOptions, MEL_CONTROLS );
 static MenuMenu_t M_ASSIGNINPUT = MAKE_MENUMENU( "Player Input", &MMF_BigOptions, MEL_ASSIGNINPUT );
 static MenuMenu_t M_CHEATS = MAKE_MENUMENU( "Cheats", &MMF_SmallOptions, MEL_CHEATS );
 static MenuMenu_t M_MOUSESETUP = MAKE_MENUMENU( "Mouse Setup", &MMF_BigOptions, MEL_MOUSESETUP );
@@ -7124,7 +7123,7 @@ static void Menu_AssignStartingInputToPlayer(int32_t playerCount)
 
     int32_t targetPlayer = Menu_FindPlayerWithoutInput(playerCount);
     if (targetPlayer < 0)
-        targetPlayer = myconnectindex;
+        return;
 
     ud.config.SplitScreenPlayerInput[targetPlayer] = startingInput;
 

@@ -6748,6 +6748,34 @@ void G_BackToMenu(void)
     G_UpdateAppTitle();
 }
 
+static int32_t G_FindFirstPlayableLevelInVolume(int32_t const volumeNum)
+{
+    if ((unsigned)volumeNum >= (unsigned)g_volumeCnt || (g_volumeFlags[volumeNum] & EF_HIDEFROMSP))
+        return -1;
+
+    for (int32_t levelNum = 0; levelNum < MAXLEVELS; ++levelNum)
+        if (g_mapInfo[volumeNum * MAXLEVELS + levelNum].filename != nullptr)
+            return levelNum;
+
+    return -1;
+}
+
+static int32_t G_AdvanceToNextEpisodeFirstLevel(void)
+{
+    for (int32_t volumeNum = ud.volume_number + 1; volumeNum < g_volumeCnt; ++volumeNum)
+    {
+        int32_t const levelNum = G_FindFirstPlayableLevelInVolume(volumeNum);
+        if (levelNum < 0)
+            continue;
+
+        ud.m_volume_number = ud.volume_number = volumeNum;
+        ud.m_level_number = ud.level_number = levelNum;
+        return 1;
+    }
+
+    return 0;
+}
+
 static int G_EndOfLevel(void)
 {
     auto &p = *g_player[myconnectindex].ps;
@@ -6808,6 +6836,7 @@ static int G_EndOfLevel(void)
 
         if (ud.eog || G_HaveUserMap())
         {
+            int32_t const wasEndOfGame = ud.eog;
             ud.eog = 0;
             if ((!g_netServer && ud.multimode < 2))
             {
@@ -6822,8 +6851,21 @@ static int G_EndOfLevel(void)
             }
             else
             {
-                ud.m_level_number = 0;
-                ud.level_number = 0;
+                if (wasEndOfGame && G_HaveSplitScreen())
+                {
+                    if (!G_AdvanceToNextEpisodeFirstLevel())
+                    {
+                        p.gm = 0;
+                        Menu_Open(myconnectindex);
+                        Menu_Change(MENU_MAIN);
+                        return 2;
+                    }
+                }
+                else
+                {
+                    ud.m_level_number = 0;
+                    ud.level_number = 0;
+                }
             }
         }
     }
